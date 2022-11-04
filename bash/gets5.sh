@@ -1,12 +1,13 @@
-gets5() {
+gff() {
 
     # Declare an array of handy shortcuts. The key can be provided
-    # on the command line as the <remote_dir> and the full path
+    # on the command line as the <search_dir> and the full path
     # will be substituted.  Add as many as you want.
     declare -A loc_keys
     loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases/"
     loc_keys["ip"]="/nfs/teams/ret/share/release/"
     loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio/"
+    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal"
     loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools/"
     loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation/"
     loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk/"
@@ -14,35 +15,49 @@ gets5() {
     loc_keys["octane"]="/nfs/teams/sw/share/octane/"
 
     function usage() {
-        echo "Find and download files on SiFive network machines."
-        echo "Usage:"
-        echo "  gets5 [-eEs] [-m maxdepth] [<remote_host>] <remote_dir>"
-        echo ""
-        echo "-e : extract the package if it is a recognized archive"
-        echo "-E : like -e, but delete the archive after extraction"
-        echo "-s : Usually entries are sorted by last mode date. This"
-        echo "     flags turns off sorting by date."
-        echo ""
-        echo "-m maxdepth : Default is 6, so only files up to six levels"
-        echo "   deep are shown.  This is primarily for speed.  You can"
-        echo "   specify deeper, or shallower, if you want."
-        echo ""
-        echo "<remote_host> is the remote machine to search on. If <remote_host>"
-        echo "is not specified \"${remote_host}\" will be used. You can change the"
-        echo "default by editing this bash function.  This can also match a host"
-        echo "entry in your .ssh/config file (which makes things easy)"
-        echo ""
-        echo "<remote_dir> is the root directory to search from."
-        echo ""
-        echo "The following shortcut keywords are configured:"
-        echo ""
+cat << EndOfUsage        
+A fuzzy file finder for remote(ssh) and local folders.
+
+Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir>
+
+  -e : extract the package if it is a recognized archive
+  -E : like -e, but delete the archive after extraction
+  -s : Usually entries are sorted by last mode date. This
+       flags turns off sorting by date.
+
+  -m maxdepth : Default is ${maxdepth}, so only files up to six levels
+     deep are shown.  This is primarily for speed and decluttering.
+     You can specify deeper, or shallower, if you want.
+
+  -q querystring
+     Default is ${query_str}. This is the initial string for 
+     the search query.  For instance, if you know you're looking 
+     for zip files, use '-q .zip'
+
+  -h remote_host 
+     Overide the default remote host (which is '${search_host}').
+     Use this is the filesystem does not exist on the default
+     remote host (for instance '/scratch' ).  You can change the default 
+     remote host by editing this bash function. This can be a host entry 
+     in your .ssh/config file (which makes things easy)
+
+<search_dir> is the root directory to search from.
+
+If the <search_dir> exists on the local system (where you are using
+this script) then a local search will be done.  If you really want
+to a remote search using the same <search_dir> then use the '-r'
+flag to force a remote search.
+
+Shortcuts are easy to remember keys for common search paths that
+you use.  Add or remove shortcuts by editing this script.  It's easy.
+
+The following shortcut keywords are currently configured:
+
+EndOfUsage
+
         for key in ${!loc_keys[@]}; do
             printf "  %-8s => %s\n" ${key} ${loc_keys[${key}]}
         done
-        echo ""
-        echo "Add or remove shortcuts by editing this script"
-        echo ""
-
         return
     }
 
@@ -50,9 +65,11 @@ gets5() {
     local delete=0
     local sort=1
     local maxdepth=6
+    local force_remote=0
+    local query_str=".tar.gz"
 
     local OPTIND o
-    while getopts "eEsm:" o; do
+    while getopts "leEsm:q:rh:" o; do
         case "${o}" in
             e)
                 extract=1
@@ -66,6 +83,15 @@ gets5() {
                 ;;
             m)
                 maxdepth=${OPTARG}
+                ;;
+            r)
+                force_remote=1
+                ;;
+            q)
+                query_str="${OPTARG}"
+                ;;
+            h)
+                search_host="${OPTARG}"
                 ;;
             *)
                 usage
@@ -84,8 +110,17 @@ gets5() {
     #   IdentityFile ~/.ssh/id_rsa_s5
     #
     # Specifying the actual host on the ProxyCommand line (sw01 in
-    # this example.)
-    local remote_host=remote
+    # this example.) (note, my config has an sw01 alias, but it sets
+    # up tunnels and other things not required here, so I have this
+    # separate 'remote' entry dedicated for this)
+    local search_host=remote
+
+    # If you do most of your searching on a local machine, you can do this:
+    #
+    #  local search_host=$(hostname)
+    # 
+    # You can still do remote search/fecth by specifying the remote host 
+    # on the command line
 
     # Check that fzf is available
     if ! command -v fzf &> /dev/null
@@ -96,24 +131,29 @@ gets5() {
         return
     fi
 
-    local remote_dir
-    if [ "$#" -eq 1 ]; then
-        remote_dir=${1}
-    elif [ "$#" -eq 2 ]; then
-        remote_host=${1}
-        remote_dir=${2}
-    else
+    local search_dir
+
+    if [ "$#" -ne 1 ]; then
+        echo "Too many paths...expecting only one"
         usage
         return
     fi
 
+    local search_dir=${1}
+
+    local is_local=0
+
+    if [ ${search_host} == $(hostname) ]; then is_local=1; fi
+
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
-        if [ ${remote_dir} == ${key} ]; then
-            remote_dir=${loc_keys[${key}]}
+        if [ ${search_dir} == ${key} ]; then
+            search_dir=${loc_keys[${key}]}
             break
         fi
     done
+
+    if [ -d ${search_dir} ] && [ ${force_remote} -eq 0 ]; then is_local=1; fi
 
     # Mysterious magical things happen here...
     #
@@ -128,15 +168,34 @@ gets5() {
 
     local dir
     
-    if [ ${sort} -eq 1 ]; then
-        dir=$(ssh ${remote_host} "cd ${remote_dir} && find . -maxdepth ${maxdepth} -type f \
-        ! -path \"*/.*\" \
-        -printf \"%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n\" 2> /dev/null" | sort -n -r | fzf +s +m) 
-    else
-        dir=$(ssh ${remote_host} "cd ${remote_dir} && find . -maxdepth ${maxdepth} -type f \
-        ! -path \"*/.*\" \
-        -printf \"%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n\" 2> /dev/null" | fzf +s +m) 
+    quote () { 
+        local quoted=${1//\'/\'\\\'\'};
+        printf "'%s'" "$quoted"
+    }
+
+    local sort_cmd="tee"
+    if [ ${sort} -eq 1 ]; then sort_cmd="sort -n -r"; fi
+
+    local find_cmd
+    local shell_cmd
+    local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
+
+    local host=${search_host}
+    if [ ${is_local} -eq 1 ]; then
+        host=$(hostname)
     fi
+
+    fzf_params="--header=\"(${host}) Searching: ${search_dir}\""
+
+    if [ ${is_local} -eq 1 ]; then
+        find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \"*/.*\" -printf \"${formatter}\" 2> /dev/null"
+        shell_cmd="pushd ${search_dir} >/dev/null && ${find_cmd} | ${sort_cmd} | fzf +s +m --query=${query_str} ${fzf_params} && popd >/dev/null"
+    else 
+        find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \\\"*/.*\\\" -printf \\\"${formatter}\\\" 2> /dev/null"
+        shell_cmd="ssh ${search_host} \"cd ${search_dir} && ${find_cmd} | ${sort_cmd}\" | fzf +s +m --query=${query_str} ${fzf_params}"
+    fi
+
+    dir=$(eval ${shell_cmd})
     
     if [ "${dir}" == "" ]; then
         # Nothing selected, op aborted!
@@ -145,15 +204,30 @@ gets5() {
 
     # Third field in the find output is the filename
     local tokens=( $dir ) 
-    local remote_file=${remote_dir}/${tokens[3]}
+    local remote_file=${search_dir}/${tokens[3]}
+    local same_file=0
 
-    scp ${remote_host}:${remote_file} .
+    local copy_cmd="scp ${search_host}:${remote_file} ."
+    if [ ${is_local} -eq 1 ]; then
+        # Check to see if the selected file is present in the same folder.
+        if [ "$(stat -L -c %d:%i ${remote_file})" = "$(stat -L -c %d:%i ./$(basename ${remote_file}) 2> /dev/null)" ]; then
+            copy_cmd=""
+            same_file=1
+        else
+            copy_cmd="cp ${remote_file} ."
+        fi
+    fi
+
+    eval ${copy_cmd}
+
     if [ $? -ne 0 ]; then
-        echo "Oops, something went wrong during download..."
+        echo "Oops, something went wrong during download...ABORT!"
         return
     fi
 
     local local_file="$(basename ${remote_file})"
+    
+    
 
     local extracted=0
     if [ ${extract} -eq 1 ]; then
@@ -181,9 +255,16 @@ gets5() {
         esac
 
         if [ ${extracted} -eq 1 ] && [ ${delete} -eq 1 ]; then
-            echo "Removing ${local_file}"
-            rm ${local_file}
+            if [ $same_file -eq 1 ]; then
+                echo "Not deleting ${local_file} because it is the source file."
+            else
+                echo "Removing ${local_file}"
+                rm ${local_file}
+            fi
         fi
+    else
+        # Just ls the local file for the user
+        ls -l ${local_file}
     fi
 
     return
