@@ -137,7 +137,8 @@ EndOfUsage
     fi
 
     if [ "$#" -ne 1 ]; then
-        echo "Too many paths...expecting only one"
+        echo "Bad Args: $# $@"
+        echo "Expected a single folder or file name..."
         usage
         return
     fi
