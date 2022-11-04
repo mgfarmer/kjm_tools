@@ -7,7 +7,7 @@ gff() {
     loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases/"
     loc_keys["ip"]="/nfs/teams/ret/share/release/"
     loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio/"
-    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal"
+    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal .zip .gz"
     loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools/"
     loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation/"
     loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk/"
@@ -41,7 +41,9 @@ Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_di
      remote host by editing this bash function. This can be a host entry 
      in your .ssh/config file (which makes things easy)
 
-<search_dir> is the root directory to search from.
+<search_dir> is the root directory to search from.  <search_dir>
+can be a fully qualified filename, and it will be downloaded without
+opening the search pane.
 
 If the <search_dir> exists on the local system (where you are using
 this script) then a local search will be done.  If you really want
@@ -67,6 +69,7 @@ EndOfUsage
     local maxdepth=6
     local force_remote=0
     local query_str=".tar.gz"
+    local query_ovr=0
 
     # This is the default <remote-host> to use if none is specifed
     # on the command line.  I suggest using an dedicated entry from
@@ -103,7 +106,8 @@ EndOfUsage
                 force_remote=1
                 ;;
             q)
-                query_str="${OPTARG}"
+                query_str="\"${OPTARG}\""
+                query_ovr=1
                 ;;
             h)
                 search_host="${OPTARG}"
@@ -132,29 +136,32 @@ EndOfUsage
         return
     fi
 
-    local search_dir
-
     if [ "$#" -ne 1 ]; then
         echo "Too many paths...expecting only one"
         usage
         return
     fi
 
-    local search_dir=${1}
-
+    
     local is_local=0
 
     if [ ${search_host} == $(hostname) ]; then is_local=1; fi
 
+    local search_dir=${1}
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
-            search_dir=${loc_keys[${key}]}
+            local parts=( ${loc_keys[${key}]} ) 
+            search_dir=${parts[0]}
+            local qs=${parts[@]:1}
+            if [ ${query_ovr} -eq 0 ] && ! [ "${qs}" == "" ]; then
+                query_str="\"${qs}\""
+            fi
             break
         fi
     done
 
-    if [ -d ${search_dir} ] && [ ${force_remote} -eq 0 ]; then is_local=1; fi
+    if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && [ ${force_remote} -eq 0 ]; then is_local=1; fi
 
     # Mysterious magical things happen here...
     #
@@ -186,7 +193,7 @@ EndOfUsage
         host=$(hostname)
     fi
 
-    fzf_params="--header=\"(${host}) Searching: ${search_dir}\""
+    fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
 
     if [ ${is_local} -eq 1 ]; then
         find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \"*/.*\" -printf \"${formatter}\" 2> /dev/null"
@@ -196,16 +203,30 @@ EndOfUsage
         shell_cmd="ssh ${search_host} \"cd ${search_dir} && ${find_cmd} | ${sort_cmd}\" | fzf +s +m --query=${query_str} ${fzf_params}"
     fi
 
+    #echo ${shell_cmd} && return
+
     dir=$(eval ${shell_cmd})
-    
+
+    local remote_file
     if [ "${dir}" == "" ]; then
+        echo "checking to see if it is a file..."
+        if [ ${is_local} -eq 1 ]; then
+            dir=$([[ -f ${search_dir} ]] && echo "${search_dir}")
+        else 
+            dir=$(ssh ${search_host} "[[ -f ${search_dir} ]] && echo \"${search_dir}\"")
+        fi
         # Nothing selected, op aborted!
-        return
+        if [ "${dir}" == "" ]; then 
+            echo "No results! Check your query..."
+            return
+        fi
+        remote_file=${dir}
+    else
+        # Third field in the find output is the filename
+        local tokens=( $dir ) 
+        remote_file=${search_dir}/${tokens[3]}
     fi
 
-    # Third field in the find output is the filename
-    local tokens=( $dir ) 
-    local remote_file=${search_dir}/${tokens[3]}
     local same_file=0
 
     local copy_cmd="scp ${search_host}:${remote_file} ."
@@ -222,7 +243,9 @@ EndOfUsage
     eval ${copy_cmd}
 
     if [ $? -ne 0 ]; then
-        echo "Oops, something went wrong during download...ABORT!"
+        if [ -f ./$(basename ${remote_file}) ]; then
+            rm ./$(basename ${remote_file})
+        fi
         return
     fi
 
