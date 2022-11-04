@@ -68,6 +68,21 @@ EndOfUsage
     local force_remote=0
     local query_str=".tar.gz"
 
+    # This is the default <remote-host> to use if none is specifed
+    # on the command line.  I suggest using an dedicated entry from
+    # your .ssh/config file, like this:
+    #
+    # Host remote
+    #   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
+    #   User kevinm
+    #   IdentityFile ~/.ssh/id_rsa_s5
+    #
+    # Specifying the actual host on the ProxyCommand line (sw01 in
+    # this example.) (note, my config has an sw01 alias, but it sets
+    # up tunnels and other things not required here, so I have this
+    # separate 'remote' entry dedicated for this)
+    local search_host=remote
+
     local OPTIND o
     while getopts "leEsm:q:rh:" o; do
         case "${o}" in
@@ -100,20 +115,6 @@ EndOfUsage
     done
     shift $((OPTIND-1))
 
-    # This is the default <remote-host> to use if none is specifed
-    # on the command line.  I suggest using an dedicated entry from
-    # your .ssh/config file, like this:
-    #
-    # Host remote
-    #   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
-    #   User kevinm
-    #   IdentityFile ~/.ssh/id_rsa_s5
-    #
-    # Specifying the actual host on the ProxyCommand line (sw01 in
-    # this example.) (note, my config has an sw01 alias, but it sets
-    # up tunnels and other things not required here, so I have this
-    # separate 'remote' entry dedicated for this)
-    local search_host=remote
 
     # If you do most of your searching on a local machine, you can do this:
     #
