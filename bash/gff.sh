@@ -206,6 +206,9 @@ EndOfUsage
     #echo ${shell_cmd} && return
 
     dir=$(eval ${shell_cmd})
+    if [ $? -eq 130 ]; then
+        return
+    fi
 
     local remote_file
     if [ "${dir}" == "" ]; then
