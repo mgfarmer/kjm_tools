@@ -7,7 +7,7 @@ gff() {
     loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases/"
     loc_keys["ip"]="/nfs/teams/ret/share/release/"
     loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio/"
-    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal .zip .gz"
+    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip .gz, kevinm@login.sifive.com"
     loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools/"
     loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation/"
     loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk/"
@@ -36,10 +36,11 @@ Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_di
 
   -h remote_host 
      Overide the default remote host (which is '${search_host}').
-     Use this is the filesystem does not exist on the default
+     Use this if the file system you need does not exist on the default
      remote host (for instance '/scratch' ).  You can change the default 
      remote host by editing this bash function. This can be a host entry 
-     in your .ssh/config file (which makes things easy)
+     in your .ssh/config file (which makes things easy) or you can simply
+     use "<user>@<host>"
 
 <search_dir> is the root directory to search from.  <search_dir>
 can be a fully qualified filename, and it will be downloaded without
@@ -85,6 +86,7 @@ EndOfUsage
     # up tunnels and other things not required here, so I have this
     # separate 'remote' entry dedicated for this)
     local search_host=remote
+    local host_ovr=0
 
     local OPTIND o
     while getopts "leEsm:q:rh:" o; do
@@ -111,6 +113,7 @@ EndOfUsage
                 ;;
             h)
                 search_host="${OPTARG}"
+                host_ovr=1
                 ;;
             *)
                 usage
@@ -143,6 +146,14 @@ EndOfUsage
         return
     fi
 
+    trim() {
+        local var="$*"
+        # remove leading whitespace characters
+        var="${var#"${var%%[![:space:]]*}"}"
+        # remove trailing whitespace characters
+        var="${var%"${var##*[![:space:]]}"}"
+        printf '%s' "$var"
+    }
     
     local is_local=0
 
@@ -152,12 +163,34 @@ EndOfUsage
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
-            local parts=( ${loc_keys[${key}]} ) 
-            search_dir=${parts[0]}
-            local qs=${parts[@]:1}
+            # tokenize the shortcut using comma seperator, we cannot
+            # include a <space> in the IFS value because that will 
+            # cause whitespace in the search terms to be lost.
+            IFS="," read -a fields <<<"${loc_keys[${key}]}"
+
+            # now strip leading/railing white space from
+            # tokens, building a new array of the results
+            local fa=( )
+            for (( i=0; i<${#fields[@]}; i++ )); do 
+                #echo "$i  ${fields[$i]}"
+                fa[$i]=$(trim "${fields[$i]}")
+            done
+
+            # Apply the base folder
+            search_dir=${fa[0]}
+
+            # Apply the query terms, unless overridden on the command line
+            local qs=${fa[1]}
             if [ ${query_ovr} -eq 0 ] && ! [ "${qs}" == "" ]; then
                 query_str="\"${qs}\""
             fi
+
+            # Apply the search host, unless overridden on the command line
+            local ho=${fa[2]}
+            if [ ${query_ovr} -eq 0 ] && ! [ "${ho}" == "" ]; then
+                search_host="\"${ho}\""
+            fi
+
             break
         fi
     done
