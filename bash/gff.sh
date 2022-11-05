@@ -61,8 +61,20 @@ this script) then a local search will be done.  If you really want
 to a remote search using the same <search_dir> then use the '-r'
 flag to force a remote search.
 
+<subdir> is an optional subfolder path applied to the main
+<search_dir> (as <search_dir>/<subdir>).  This is useful in shortcuts
+where a shortcut defines a top level folder path, but you want to
+drill down a bit more when using the shortcut.
+
 Shortcuts are easy to remember keys for common search paths that
 you use.  Add or remove shortcuts by editing this script.  It's easy.
+
+Each shortcut consists of up to three fields, separated 
+by commas.  The fields are:
+
+1. (required) the base folder name to be searched
+2. (optional) an initial query string for fzf, can include spaces
+3. (optional) a host name to search on
 
 The following shortcut keywords are currently configured:
 
