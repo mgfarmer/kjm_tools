@@ -3,6 +3,14 @@ gff() {
     # Declare an array of handy shortcuts. The key can be provided
     # on the command line as the <search_dir> and the full path
     # will be substituted.  Add as many as you want.
+    #
+    # Each shortcut consists of up to three fields, separated 
+    # by commas.  The fields are:
+    #
+    # 1. (required) the base folder name to be searched
+    # 2. (optional) an initial query string for fzf 
+    # 3. (optional) a host name to search on
+    #
     declare -A loc_keys
     loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases/"
     loc_keys["ip"]="/nfs/teams/ret/share/release/"
@@ -13,12 +21,14 @@ gff() {
     loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk/"
     loc_keys["alg"]="/nfs/teams/sw/share/lib/"
     loc_keys["octane"]="/nfs/teams/sw/share/octane/"
+    loc_keys["dl"]="~/Downloads"
+    loc_keys["scratch"]="/scratch/kevinm, , remote"
 
     function usage() {
 cat << EndOfUsage        
 A fuzzy file finder for remote(ssh) and local folders.
 
-Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir>
+Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir> [<subdir>]
 
   -e : extract the package if it is a recognized archive
   -E : like -e, but delete the archive after extraction
@@ -59,7 +69,7 @@ The following shortcut keywords are currently configured:
 EndOfUsage
 
         for key in ${!loc_keys[@]}; do
-            printf "  %-8s => %s\n" ${key} ${loc_keys[${key}]}
+            printf "  %-8s => %s\n" ${key} "${loc_keys[${key}]}"
         done
         return
     }
@@ -69,7 +79,7 @@ EndOfUsage
     local sort=1
     local maxdepth=6
     local force_remote=0
-    local query_str=".tar.gz"
+    local query_str=""
     local query_ovr=0
 
     # This is the default <remote-host> to use if none is specifed
@@ -139,13 +149,36 @@ EndOfUsage
         return
     fi
 
-    if [ "$#" -ne 1 ]; then
-        echo "Bad Args: $# $@"
-        echo "Expected a single folder or file name..."
+    if [ "$#" -eq 0 ]; then
+        echo "No folder or shortcut provided!"
         usage
         return
     fi
 
+    # Expand ~'s in folder names'
+    # https://stackoverflow.com/a/29310477/45206
+    expandPath() {
+    case $1 in
+        ~[+-]*)
+        local content content_q
+        printf -v content_q '%q' "${1:2}"
+        eval "content=${1:0:2}${content_q}"
+        printf '%s\n' "$content"
+        ;;
+        ~*)
+        local content content_q
+        printf -v content_q '%q' "${1:1}"
+        eval "content=~${content_q}"
+        printf '%s\n' "$content"
+        ;;
+        *)
+        printf '%s\n' "$1"
+        ;;
+    esac
+    }
+
+    # trim leading/trailing whitespace
+    # https://stackoverflow.com/a/3352015/45206
     trim() {
         local var="$*"
         # remove leading whitespace characters
@@ -160,9 +193,12 @@ EndOfUsage
     if [ ${search_host} == $(hostname) ]; then is_local=1; fi
 
     local search_dir=${1}
+    local subdir=${2}
+
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
+            echo "Using shortcut: ${key}"
             # tokenize the shortcut using comma seperator, we cannot
             # include a <space> in the IFS value because that will 
             # cause whitespace in the search terms to be lost.
@@ -176,8 +212,9 @@ EndOfUsage
                 fa[$i]=$(trim "${fields[$i]}")
             done
 
-            # Apply the base folder
-            search_dir=${fa[0]}
+            # Apply the base folder, using expandPath allows
+            # shortcut paths to use "~/<path>"
+            search_dir=$(expandPath ${fa[0]})
 
             # Apply the query terms, unless overridden on the command line
             local qs=${fa[1]}
@@ -195,8 +232,13 @@ EndOfUsage
         fi
     done
 
-    if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && [ ${force_remote} -eq 0 ]; then is_local=1; fi
+    # apply a subdir, if provided
+    local subdir=${2}
+    if ! [ ${subdir} = "" ]; then
+        search_dir=${search_dir}/${subdir}
+    fi
 
+    if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && [ ${force_remote} -eq 0 ]; then is_local=1; fi
     # Mysterious magical things happen here...
     #
     # - Hidden folders are skipped
@@ -210,11 +252,6 @@ EndOfUsage
 
     local dir
     
-    quote () { 
-        local quoted=${1//\'/\'\\\'\'};
-        printf "'%s'" "$quoted"
-    }
-
     local sort_cmd="tee"
     if [ ${sort} -eq 1 ]; then sort_cmd="sort -n -r"; fi
 
@@ -288,8 +325,6 @@ EndOfUsage
 
     local local_file="$(basename ${remote_file})"
     
-    
-
     local extracted=0
     if [ ${extract} -eq 1 ]; then
         echo "Extracting ${local_file}..."
