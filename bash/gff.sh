@@ -139,6 +139,7 @@ EndOfUsage
                 ;;
             *)
                 usage
+                return
                 ;;
         esac
     done
@@ -200,6 +201,25 @@ EndOfUsage
         printf '%s' "$var"
     }
     
+    # Parse csv strings, removing leading and trailing whitespace while
+    # preserving embedded white space.  Call as:
+    #   parse_csv <array> <string>
+    #
+    parse_csv() {
+        local -n farr=$1
+        # tokenize the shortcut using comma seperator, we cannot
+        # include a <space> in the IFS value because that will 
+        # cause whitespace in the search terms to be lost.
+        set -f; IFS="," read -a fields <<<"${2}"; set +f
+
+        # now strip leading/railing white space from
+        # tokens, building a new array of the results
+        for (( i=0; i<${#fields[@]}; i++ )); do 
+            #echo "$i  ${fields[$i]}"
+            farr[$i]=$(trim "${fields[$i]}")
+        done
+    }
+
     local is_local=0
 
     if [ ${search_host} == $(hostname) ]; then is_local=1; fi
@@ -210,19 +230,10 @@ EndOfUsage
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
-            echo "Using shortcut: ${key}"
-            # tokenize the shortcut using comma seperator, we cannot
-            # include a <space> in the IFS value because that will 
-            # cause whitespace in the search terms to be lost.
-            IFS="," read -a fields <<<"${loc_keys[${key}]}"
-
-            # now strip leading/railing white space from
-            # tokens, building a new array of the results
             local fa=( )
-            for (( i=0; i<${#fields[@]}; i++ )); do 
-                #echo "$i  ${fields[$i]}"
-                fa[$i]=$(trim "${fields[$i]}")
-            done
+            parse_csv fa ${loc_keys[${key}]}
+
+            echo "Using shortcut: ${key} => ${fa[0]}"
 
             # Apply the base folder, using expandPath allows
             # shortcut paths to use "~/<path>"
@@ -246,11 +257,20 @@ EndOfUsage
 
     # apply a subdir, if provided
     local subdir=${2}
-    if ! [ ${subdir} = "" ]; then
+    if ! [ "${subdir}" == "" ]; then
         search_dir=${search_dir}/${subdir}
     fi
 
     if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && [ ${force_remote} -eq 0 ]; then is_local=1; fi
+
+    local remote_file
+    local looks_like_a_file=false
+    if [[ ${search_dir} =~ .*\.[a-zA-Z0-9]+ ]]; then
+        looks_like_a_file=true
+        remote_file=${search_dir}
+        #echo "Looks like a file: ${search_dir}"
+    fi
+
     # Mysterious magical things happen here...
     #
     # - Hidden folders are skipped
@@ -262,55 +282,57 @@ EndOfUsage
     # - Hit ESC to exit without doing anything (i.e. abort)
     #
 
-    local dir
-    
-    local sort_cmd="tee"
-    if [ ${sort} -eq 1 ]; then sort_cmd="sort -n -r"; fi
+    if [ "${remote_file}" == "" ]; then
+        local dir
+        
+        local sort_cmd="tee"
+        if [ ${sort} -eq 1 ]; then sort_cmd="sort -n -r"; fi
 
-    local find_cmd
-    local shell_cmd
-    local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
+        local find_cmd
+        local shell_cmd
+        local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
 
-    local host=${search_host}
-    if [ ${is_local} -eq 1 ]; then
-        host=$(hostname)
-    fi
-
-    fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
-
-    if [ ${is_local} -eq 1 ]; then
-        find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \"*/.*\" -printf \"${formatter}\" 2> /dev/null"
-        shell_cmd="pushd ${search_dir} >/dev/null && ${find_cmd} | ${sort_cmd} | fzf +s +m --query=${query_str} ${fzf_params} && popd >/dev/null"
-    else 
-        find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \\\"*/.*\\\" -printf \\\"${formatter}\\\" 2> /dev/null"
-        shell_cmd="ssh ${search_host} \"cd ${search_dir} && ${find_cmd} | ${sort_cmd}\" | fzf +s +m --query=${query_str} ${fzf_params}"
-    fi
-
-    #echo ${shell_cmd} && return
-
-    dir=$(eval ${shell_cmd})
-    if [ $? -eq 130 ]; then
-        return
-    fi
-
-    local remote_file
-    if [ "${dir}" == "" ]; then
-        echo "checking to see if it is a file..."
+        local host=${search_host}
         if [ ${is_local} -eq 1 ]; then
-            dir=$([[ -f ${search_dir} ]] && echo "${search_dir}")
-        else 
-            dir=$(ssh ${search_host} "[[ -f ${search_dir} ]] && echo \"${search_dir}\"")
+            host=$(hostname)
         fi
-        # Nothing selected, op aborted!
-        if [ "${dir}" == "" ]; then 
-            echo "No results! Check your query..."
+
+        fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
+
+        local fzf_command="fzf +s +m --query=${query_str} ${fzf_params}"
+        if [ ${is_local} -eq 1 ]; then
+            find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \"*/.*\" -printf \"${formatter}\" 2> /dev/null"
+            shell_cmd="pushd ${search_dir} >/dev/null && ${find_cmd} | ${sort_cmd} | ${fzf_command} && popd >/dev/null"
+        else 
+            find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \\\"*/.*\\\" -printf \\\"${formatter}\\\" 2> /dev/null"
+            shell_cmd="ssh ${search_host} \"cd ${search_dir} && ${find_cmd} | ${sort_cmd}\" | ${fzf_command}"
+        fi
+
+        #echo ${shell_cmd} && return
+
+        dir=$(eval ${shell_cmd})
+        if [ $? -eq 130 ]; then
             return
         fi
-        remote_file=${dir}
-    else
-        # Third field in the find output is the filename
-        local tokens=( $dir ) 
-        remote_file=${search_dir}/${tokens[3]}
+
+        if [ "${dir}" == "" ]; then
+            echo "checking to see if it is a file..."
+            if [ ${is_local} -eq 1 ]; then
+                dir=$([[ -f ${search_dir} ]] && echo "${search_dir}")
+            else 
+                dir=$(ssh ${search_host} "[[ -f ${search_dir} ]] && echo \"${search_dir}\"")
+            fi
+            # Nothing selected, op aborted!
+            if [ "${dir}" == "" ]; then 
+                echo "No results! Check your query..."
+                return
+            fi
+            remote_file=${dir}
+        else
+            # Third field in the find output is the filename
+            local tokens=( $dir ) 
+            remote_file=${search_dir}/${tokens[3]}
+        fi
     fi
 
     local same_file=0
@@ -328,6 +350,7 @@ EndOfUsage
 
     eval ${copy_cmd}
 
+    # If the fetch failed, remove any partial download/copy and exit.
     if [ $? -ne 0 ]; then
         if [ -f ./$(basename ${remote_file}) ]; then
             rm ./$(basename ${remote_file})
@@ -338,29 +361,31 @@ EndOfUsage
     local local_file="$(basename ${remote_file})"
     
     local extracted=0
+
     if [ ${extract} -eq 1 ]; then
-        echo "Extracting ${local_file}..."
-        case "${local_file}" in
-        *.tgz | *.tar.gz )
-            tar xzf ${local_file}
-            extracted=1
-            ;;
-        *.tar )
-            tar xf ${local_file}
-            extracted=1
-            ;;
-        *.gz | *.gzip )
-            gunzip ${local_file}
-            ;;
-        *.zip )
-            unzip ${local_file}
-            extracted=1
-            ;;
-        * )
-            echo "Oops: ${local_file} is not a recognized archive."
-            echo "Only .tar.gz, .tgz, .tar, .gz, and .zip are known."
-            ;;
-        esac
+        local extractors=()
+        extractors+=("*.tar.gz,  tar xzf")
+        extractors+=("*.tgz,     tar xzf")
+        extractors+=("*.tar,     tar xf")
+        extractors+=("*.gz,      gunzip")
+        extractors+=("*.zip,     unzip -o")
+        extractors+=("*.7z,      7z x -aoa")
+
+
+        for extractor in ${!extractors[@]}; do
+            local ex=()
+            parse_csv ex "${extractors[${extractor}]}"
+            if [ ${local_file} = ${ex[0]} ]; then
+                if ! [ -x "$(command -v ${ex[1]})" ]; then
+                    echo "\"${ex[1]}\" not found.  Please install it, if needed, and"
+                    echo "put it on your path."
+                    return
+                fi
+                # Do the extraction!
+                echo "Extracting ${local_file}..."
+                eval ${ex[1]} ${local_file} && extracted=1
+            fi
+        done
 
         if [ ${extracted} -eq 1 ] && [ ${delete} -eq 1 ]; then
             if [ $same_file -eq 1 ]; then
