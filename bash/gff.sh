@@ -258,7 +258,6 @@ EndOfUsage
                 query_str="\"${qs}\""
             fi
 
-            return
             # Apply the search host, unless overridden on the command line
             local ho=${fa[2]}
             if ! ${host_ovr} ] && ! [ "${ho}" == "" ]; then
