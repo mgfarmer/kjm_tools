@@ -329,9 +329,9 @@ EndOfUsage
             fi
             remote_file=${dir}
         else
-            # Third field in the find output is the filename
+            # The last field in the find output is the filename
             local tokens=( $dir ) 
-            remote_file=${search_dir}/${tokens[3]}
+            remote_file=${search_dir}/${tokens[-1]}
         fi
     fi
 
