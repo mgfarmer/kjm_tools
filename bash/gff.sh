@@ -244,7 +244,7 @@ EndOfUsage
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
             local fa=( )
-            parse_csv fa ${loc_keys[${key}]}
+            parse_csv fa "${loc_keys[${key}]}"
 
             echo "Using shortcut: ${key} => ${fa[0]}"
 
@@ -258,6 +258,7 @@ EndOfUsage
                 query_str="\"${qs}\""
             fi
 
+            return
             # Apply the search host, unless overridden on the command line
             local ho=${fa[2]}
             if ! ${host_ovr} ] && ! [ "${ho}" == "" ]; then
