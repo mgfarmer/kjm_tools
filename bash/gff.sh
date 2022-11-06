@@ -28,12 +28,15 @@ gff() {
 cat << EndOfUsage        
 A fuzzy file finder for remote(ssh) and local folders.
 
-Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir> [<subdir>]
+Usage: gff [-reEshfa] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir> [<subdir>]
 
   -e : extract the package if it is a recognized archive
   -E : like -e, but delete the archive after extraction
   -s : Usually entries are sorted by last mode date. This
        flags turns off sorting by date.
+  -f : force treat as file. Use when trying to download a
+       file directly, where the filename does not have an extension
+  -a : show hidden files and folder too.  They are filtered by default
 
   -m maxdepth : Default is ${maxdepth}, so only files up to six levels
      deep are shown.  This is primarily for speed and decluttering.
@@ -51,6 +54,7 @@ Usage: gff [-reEsh] [-m maxdepth] [-q querystring] [-r <search_host>] <search_di
      remote host by editing this bash function. This can be a host entry 
      in your .ssh/config file (which makes things easy) or you can simply
      use "<user>@<host>"
+
 
 <search_dir> is the root directory to search from.  <search_dir>
 can be a fully qualified filename, and it will be downloaded without
@@ -86,13 +90,17 @@ EndOfUsage
         return
     }
 
-    local extract=0
-    local delete=0
-    local sort=1
+    local extract=false
+    local delete=false
+    local sort=true
     local maxdepth=6
-    local force_remote=0
+    local force_remote=false
+    local force_is_a_file=false
     local query_str=""
-    local query_ovr=0
+    local query_ovr=false
+    local looks_like_a_file=false
+    local filter_hidden=true
+    local host_ovr=false
 
     # This is the default <remote-host> to use if none is specifed
     # on the command line.  I suggest using an dedicated entry from
@@ -108,34 +116,39 @@ EndOfUsage
     # up tunnels and other things not required here, so I have this
     # separate 'remote' entry dedicated for this)
     local search_host=remote
-    local host_ovr=0
 
     local OPTIND o
-    while getopts "leEsm:q:rh:" o; do
+    while getopts "afleEsm:q:rh:" o; do
         case "${o}" in
             e)
-                extract=1
+                extract=true
                 ;;
             E)
-                extract=1
-                delete=1
+                extract=true
+                delete=true
                 ;;
             s)
-                sort=0
+                sort=false
                 ;;
             m)
                 maxdepth=${OPTARG}
                 ;;
             r)
-                force_remote=1
+                force_remote=true
                 ;;
             q)
                 query_str="\"${OPTARG}\""
-                query_ovr=1
+                query_ovr=true
                 ;;
             h)
                 search_host="${OPTARG}"
-                host_ovr=1
+                host_ovr=true
+                ;;
+            f)
+                looks_like_a_file=true
+                ;;
+            a)
+                filter_hidden=false
                 ;;
             *)
                 usage
@@ -220,9 +233,9 @@ EndOfUsage
         done
     }
 
-    local is_local=0
+    local is_local=false
 
-    if [ ${search_host} == $(hostname) ]; then is_local=1; fi
+    if [ ${search_host} == $(hostname) ]; then is_local=true; fi
 
     local search_dir=${1}
     local subdir=${2}
@@ -241,13 +254,13 @@ EndOfUsage
 
             # Apply the query terms, unless overridden on the command line
             local qs=${fa[1]}
-            if [ ${query_ovr} -eq 0 ] && ! [ "${qs}" == "" ]; then
+            if ! ${query_ovr} && ! [ "${qs}" == "" ]; then
                 query_str="\"${qs}\""
             fi
 
             # Apply the search host, unless overridden on the command line
             local ho=${fa[2]}
-            if [ ${query_ovr} -eq 0 ] && ! [ "${ho}" == "" ]; then
+            if ! ${host_ovr} ] && ! [ "${ho}" == "" ]; then
                 search_host="\"${ho}\""
             fi
 
@@ -261,14 +274,28 @@ EndOfUsage
         search_dir=${search_dir}/${subdir}
     fi
 
-    if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && [ ${force_remote} -eq 0 ]; then is_local=1; fi
+    if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && ! ${force_remote}; then is_local=true; fi
 
     local remote_file
-    local looks_like_a_file=false
-    if [[ ${search_dir} =~ .*\.[a-zA-Z0-9]+ ]]; then
-        looks_like_a_file=true
+
+    # Check to see if the search_dir looks like an explicit filename (i.e. not a folder name)
+    if ${looks_like_a_file}; then
         remote_file=${search_dir}
-        #echo "Looks like a file: ${search_dir}"
+    elif ${is_local}; then
+        if [ -f ${search_dir} ]; then
+            # For local use we can simply test if it is a file directly
+            remote_file=${search_dir}
+        fi
+    elif [[ $(basename ${search_dir}) =~ .*\.[a-zA-Z0-9]{1,5} ]]; then
+        # This is not 100% reliable...but should handle close to 100% of cases...
+        # But is is faster than a separate ssh command to test for it.
+        #
+        # Check to see if the search_dir looks like an explicit filename (i.e. not a folder name)
+        # by seeing if there is a '.' character in the last 6 characters of the name.  If it looks
+        # like a file we'll try to download it diretly, bypassing any fzf handling.  If you have
+        # file without an extension you can provide '-f' on the command line to force this, or
+        # let fzf fail and then attempt to downloading the file.
+        remote_file=${search_dir}
     fi
 
     # Mysterious magical things happen here...
@@ -286,25 +313,30 @@ EndOfUsage
         local dir
         
         local sort_cmd="tee"
-        if [ ${sort} -eq 1 ]; then sort_cmd="sort -n -r"; fi
+        if ${sort}; then sort_cmd="sort -n -r"; fi
 
         local find_cmd
         local shell_cmd
         local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
 
         local host=${search_host}
-        if [ ${is_local} -eq 1 ]; then
+        if ${is_local}; then
             host=$(hostname)
         fi
 
         fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
 
+        local filter_param
+        if ${filter_hidden}; then
+            if ${is_local}; then filter_param="! -path \"*/.*\""; else filter_param="! -path \\\"*/.*\\\""; fi
+        fi
+
         local fzf_command="fzf +s +m --query=${query_str} ${fzf_params}"
-        if [ ${is_local} -eq 1 ]; then
-            find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \"*/.*\" -printf \"${formatter}\" 2> /dev/null"
+        if ${is_local}; then
+            find_cmd="find . -maxdepth ${maxdepth} -type f ${filter_param} -printf \"${formatter}\" 2> /dev/null"
             shell_cmd="pushd ${search_dir} >/dev/null && ${find_cmd} | ${sort_cmd} | ${fzf_command} && popd >/dev/null"
         else 
-            find_cmd="find . -maxdepth ${maxdepth} -type f ! -path \\\"*/.*\\\" -printf \\\"${formatter}\\\" 2> /dev/null"
+            find_cmd="find . -maxdepth ${maxdepth} -type f ${filter_param} -printf \\\"${formatter}\\\" 2> /dev/null"
             shell_cmd="ssh ${search_host} \"cd ${search_dir} && ${find_cmd} | ${sort_cmd}\" | ${fzf_command}"
         fi
 
@@ -317,7 +349,7 @@ EndOfUsage
 
         if [ "${dir}" == "" ]; then
             echo "checking to see if it is a file..."
-            if [ ${is_local} -eq 1 ]; then
+            if ${is_local}; then
                 dir=$([[ -f ${search_dir} ]] && echo "${search_dir}")
             else 
                 dir=$(ssh ${search_host} "[[ -f ${search_dir} ]] && echo \"${search_dir}\"")
@@ -335,15 +367,15 @@ EndOfUsage
         fi
     fi
 
-    local same_file=0
+    local same_file=false
 
     local copy_cmd="scp ${search_host}:${remote_file} ."
     local copy_msg="Downloading: ${search_host}:${remote_file}..."
-    if [ ${is_local} -eq 1 ]; then
+    if ${is_local}; then
         # Check to see if the selected file is present in the same folder.
         if [ "$(stat -L -c %d:%i ${remote_file})" = "$(stat -L -c %d:%i ./$(basename ${remote_file}) 2> /dev/null)" ]; then
             copy_cmd=""
-            same_file=1
+            same_file=true
         else
             copy_cmd="cp ${remote_file} ."
             copy_msg="Copying ${remote_file} to here..."
@@ -363,9 +395,9 @@ EndOfUsage
 
     local local_file="$(basename ${remote_file})"
     
-    local extracted=0
+    local extracted=false
 
-    if [ ${extract} -eq 1 ]; then
+    if ${extract}; then
         local extractors=()
         extractors+=("*.tar.gz,  tar xzf")
         extractors+=("*.tgz,     tar xzf")
@@ -386,12 +418,12 @@ EndOfUsage
                 fi
                 # Do the extraction!
                 echo "Extracting ${local_file}..."
-                eval ${ex[1]} ${local_file} && extracted=1
+                eval ${ex[1]} ${local_file} && extracted=true
             fi
         done
 
-        if [ ${extracted} -eq 1 ] && [ ${delete} -eq 1 ]; then
-            if [ $same_file -eq 1 ]; then
+        if ${extracted} && ${delete}; then
+            if $same_file; then
                 echo "Not deleting ${local_file} because it is the source file."
             else
                 echo "Removing ${local_file}"
