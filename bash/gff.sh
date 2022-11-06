@@ -338,6 +338,7 @@ EndOfUsage
     local same_file=0
 
     local copy_cmd="scp ${search_host}:${remote_file} ."
+    local copy_msg="Downloading: ${search_host}:${remote_file}..."
     if [ ${is_local} -eq 1 ]; then
         # Check to see if the selected file is present in the same folder.
         if [ "$(stat -L -c %d:%i ${remote_file})" = "$(stat -L -c %d:%i ./$(basename ${remote_file}) 2> /dev/null)" ]; then
@@ -345,9 +346,11 @@ EndOfUsage
             same_file=1
         else
             copy_cmd="cp ${remote_file} ."
+            copy_msg="Copying ${remote_file} to here..."
         fi
     fi
 
+    echo "${copy_msg}"
     eval ${copy_cmd}
 
     # If the fetch failed, remove any partial download/copy and exit.
