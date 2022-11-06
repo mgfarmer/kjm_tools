@@ -12,15 +12,15 @@ gff() {
     # 3. (optional) a host name to search on
     #
     declare -A loc_keys
-    loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases/"
-    loc_keys["ip"]="/nfs/teams/ret/share/release/"
-    loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio/"
+    loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases"
+    loc_keys["ip"]="/nfs/teams/ret/share/release"
+    loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
     loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip .gz, kevinm@login.sifive.com"
-    loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools/"
-    loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation/"
-    loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk/"
-    loc_keys["alg"]="/nfs/teams/sw/share/lib/"
-    loc_keys["octane"]="/nfs/teams/sw/share/octane/"
+    loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools"
+    loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation"
+    loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk"
+    loc_keys["alg"]="/nfs/teams/sw/share/lib"
+    loc_keys["octane"]="/nfs/teams/sw/share/octane"
     loc_keys["dl"]="~/Downloads"
     loc_keys["scratch"]="/scratch/kevinm, , remote"
 
@@ -370,7 +370,6 @@ EndOfUsage
     local same_file=false
 
     local copy_cmd="scp ${search_host}:${remote_file} ."
-    local copy_msg="Downloading: ${search_host}:${remote_file}..."
     if ${is_local}; then
         # Check to see if the selected file is present in the same folder.
         if [ "$(stat -L -c %d:%i ${remote_file})" = "$(stat -L -c %d:%i ./$(basename ${remote_file}) 2> /dev/null)" ]; then
@@ -378,11 +377,12 @@ EndOfUsage
             same_file=true
         else
             copy_cmd="cp ${remote_file} ."
-            copy_msg="Copying ${remote_file} to here..."
+             echo "Copying ${remote_file} to here..."
         fi
+    else
+        echo "Downloading: ${search_host}:${remote_file}..."
     fi
 
-    echo "${copy_msg}"
     eval ${copy_cmd}
 
     # If the fetch failed, remove any partial download/copy and exit.
