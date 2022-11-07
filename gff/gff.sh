@@ -24,7 +24,7 @@ gff() {
     loc_keys["alg"]="/nfs/teams/sw/share/lib"
     loc_keys["octane"]="/nfs/teams/sw/share/octane"
     loc_keys["dl"]="~/Downloads"
-    loc_keys["scratch"]="/scratch/kevinm, , remote"
+    loc_keys["scratch"]="/scratch/kevinm, , sw01"
 
     function usage() {
 cat << EndOfUsage        
@@ -85,6 +85,7 @@ a Linux terminal to run it, but some setup is required:
 2. Clone/copy this script into that instance
 3. Modify your .bashrc to source this script on login.
 4. Install fzf: sudo apt install fzf
+5. Set up ssh access to the remote machines in WSL
 
 Windows provides a "native" bash.exe in the System32 directory that
 can be used to run this script.  The first time you run it, it may
@@ -145,7 +146,7 @@ EndOfUsage
     # this example.) (note, my config has an sw01 alias, but it sets
     # up tunnels and other things not required here, so I have this
     # separate 'remote' entry dedicated for this)
-    local search_host=remote
+    local search_host=gff_host
 
     local OPTIND o
     while getopts "afleEsm:q:rh:" o; do
@@ -349,9 +350,18 @@ EndOfUsage
         local shell_cmd
         local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
 
+        local host_alias
+
         local host=${search_host}
         if ${is_local}; then
             host=$(hostname)
+        else
+            # resolve any alias to the real hostname
+            host_alias=${host}
+            host=$(ssh -G ${host} | awk '$1 == "hostname" { print $2 }')
+            if ! [ "${host}" == "${host_alias}" ]; then
+                host="${host_alias} => ${host}"
+            fi
         fi
 
         fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
