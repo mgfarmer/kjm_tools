@@ -72,6 +72,34 @@ flag to force a remote search.
 where a shortcut defines a top level folder path, but you want to
 drill down a bit more when using the shortcut.
 
+RUNNING ON WINDOWS 
+
+It can be done!
+
+You can, of course, run it in a WSL Linux instance. But you can
+also run it from a Windows command prompt or powershell.  A WSL
+linux installation is still required, but you don't have to start
+a Linux terminal to run it, but some setup is required:
+
+1. Setup a WSL Ubuntu instance
+2. Clone/copy this script into that instance
+3. Modify your .bashrc to source this script on login.
+4. Install fzf: sudo apt install fzf
+
+Windows provides a "native" bash.exe in the System32 directory that
+can be used to run this script.  The first time you run it, it may
+take a while because Windows is spinning up the Ubuntu machine in 
+the background.  You can run it like:
+
+  C:\Windows\System32\bash.exe -i -c "gff <params>"
+
+But that is too cumbersome.  So there is also a gff.cmd file you
+can install into a folder on your path. Which can be run as:
+
+  gff <params>
+
+SHORTCUTS
+
 Shortcuts are easy to remember keys for common search paths that
 you use.  Add or remove shortcuts by editing this script.  It's easy.
 
