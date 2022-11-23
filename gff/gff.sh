@@ -12,7 +12,8 @@ gff() {
     # 3. (optional) a host name to search on
     #
     declare -A loc_keys
-    loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases"
+    loc_keys["sysc"]="/work/drom/sysc-drops"
+    loc_keys["tc"]="/nfs/teams/sw/share/compiler/releases"
     loc_keys["ip"]="/nfs/teams/ret/share/release"
     loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
     loc_keys["fsw"]="/nfs/teams/sw/static/dev-tools/freedom-studio, w64 .zip"
