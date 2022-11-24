@@ -200,6 +200,7 @@ EndOfUsage
         return
     fi
 
+
     # Expand ~'s in folder names'
     # https://stackoverflow.com/a/29310477/45206
     expandPath() {
@@ -254,10 +255,11 @@ EndOfUsage
 
     local is_local=false
 
-    if [ ${search_host} == $(hostname) ]; then is_local=true; fi
+    if [ "${search_host}" == "$(hostname)" ]; then is_local=true; fi
 
     local search_dir=${1}
     local subdir=${2}
+
 
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
@@ -294,6 +296,14 @@ EndOfUsage
     fi
 
     if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && ! ${force_remote}; then is_local=true; fi
+
+    if ! ${is_local} && [ "${search_host}" == "" ]; then
+        echo "Oops! search_host is not defined.  I don't know where to go!"
+        echo "Make sure this variable is defined in you gff_config."
+        echo ""
+        usage
+        return
+    fi
 
     local remote_file
 
