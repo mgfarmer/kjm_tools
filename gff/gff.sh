@@ -426,22 +426,6 @@ EndOfUsage
     local extracted=false
 
     if ${extract}; then
-        if ${askExtract}; then
-            while true; do
-
-            read -p "Do you want to extract this asset here? (y/n) " yn
-
-            case $yn in 
-                [yY] )
-                    break;;
-                [nN] )
-                    return;;
-                * ) echo invalid response;;
-            esac
-
-            done            
-        fi
-
         local extractors=()
         extractors+=("*.tar.gz,  tar xzf")
         extractors+=("*.tgz,     tar xzf")
@@ -463,6 +447,22 @@ EndOfUsage
                     return
                 fi
 
+                if ${askExtract}; then
+                    while true; do
+
+                    read -p "Do you want to extract this asset here? (y/n) " yn
+
+                    case $yn in 
+                        [yY] )
+                            break;;
+                        [nN] )
+                            return;;
+                        * ) echo invalid response;;
+                    esac
+
+                    done            
+                fi
+
                 # Do the extraction!
                 echo "Extracting ${local_file}..."
                 eval ${ex[1]} ${local_file} && extracted=true
@@ -470,18 +470,20 @@ EndOfUsage
             fi
         done
 
-        if ${extracted} && ${delete}; then
-            if $same_file; then
-                echo "Not deleting ${local_file} because it is the source file."
-            else
-                echo "Removing ${local_file}"
-                rm ${local_file}
+        if ${extracted}; then
+            if ${delete}; then
+                if $same_file; then
+                    echo "Not deleting ${local_file} because it is the source file."
+                else
+                    echo "Removing ${local_file}"
+                    rm ${local_file}
+                fi
             fi
+            return
         fi
-    else
-        # Just ls the local file for the user
-        ls -l ${local_file}
     fi
 
+    # Just ls the local file for the user
+    ls -l ${local_file}
     return
 }
