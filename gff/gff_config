@@ -25,17 +25,32 @@ loc_keys["octane"]="/nfs/teams/sw/share/octane"
 loc_keys["dl"]="~/Downloads"
 loc_keys["scratch"]="/scratch/kevinm, , sw01"
 
-# This is the default <remote-host> to use if none is specifed
-# on the command line.  I suggest using an dedicated entry from
-# your .ssh/config file, like this:
-#
-# Host gff_host
-#   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
-#   User kevinm
-#   IdentityFile ~/.ssh/id_rsa_s5
-#
-# Specifying the actual host on the ProxyCommand line
+# This is the default ssh host connection.  It could be host
+# entry from your .ssh/config file or just <username>@<host>
 local search_host=gff_host
 
-extract=true
-#askExtract=false
+# Set this to 'true' if you want to always extract archives
+# Default: 'false'
+# Also set 'true' with command line param: -e
+# extract=true
+
+# Set this to 'true' if you want to be prompted before extracting
+# askExtract=false
+
+# Set this to 'true' to delete the assets after extraction. 
+# Default: false
+# Also set 'true' with command line param: -d
+# delete=true
+
+# This defines how deep to search for files in the specified
+# folder.
+# Default: 6
+# Also set with command line param: -m <num>
+# maxdepth=6
+
+# Set this to 'false' to include hidden folder and files in
+# the search list.
+# Default: true
+# Also set 'true' with command line param: -a (for 'all')
+# filter_hidden=false
+
