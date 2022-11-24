@@ -1,0 +1,41 @@
+# Declare an array of handy shortcuts. The key can be provided
+# on the command line as the <search_dir> and the full path
+# will be substituted.  Add as many as you want.
+#
+# Each shortcut consists of up to three fields, separated 
+# by commas.  The fields are:
+#
+# 1. (required) the base folder name to be searched
+# 2. (optional) an initial query string for fzf 
+# 3. (optional) a host name to search on
+#
+declare -A loc_keys
+loc_keys["sysc"]="/work/drom/sysc-drops"
+loc_keys["tc"]="/nfs/teams/sw/share/compiler/releases"
+loc_keys["ip"]="/nfs/teams/ret/share/release"
+loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
+loc_keys["fsw"]="/nfs/teams/sw/static/dev-tools/freedom-studio, w64 .zip"
+loc_keys["fsu"]="/nfs/teams/sw/static/dev-tools/freedom-studio, ubuntu .tar.gz"
+loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip tar.gz, kevinm@login.sifive.com"
+loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools"
+loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation"
+loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk"
+loc_keys["alg"]="/nfs/teams/sw/share/lib"
+loc_keys["octane"]="/nfs/teams/sw/share/octane"
+loc_keys["dl"]="~/Downloads"
+loc_keys["scratch"]="/scratch/kevinm, , sw01"
+
+# This is the default <remote-host> to use if none is specifed
+# on the command line.  I suggest using an dedicated entry from
+# your .ssh/config file, like this:
+#
+# Host gff_host
+#   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
+#   User kevinm
+#   IdentityFile ~/.ssh/id_rsa_s5
+#
+# Specifying the actual host on the ProxyCommand line
+local search_host=gff_host
+
+extract=true
+#askExtract=false

@@ -1,35 +1,21 @@
 gff() {
 
-    # Declare an array of handy shortcuts. The key can be provided
-    # on the command line as the <search_dir> and the full path
-    # will be substituted.  Add as many as you want.
-    #
-    # Each shortcut consists of up to three fields, separated 
-    # by commas.  The fields are:
-    #
-    # 1. (required) the base folder name to be searched
-    # 2. (optional) an initial query string for fzf 
-    # 3. (optional) a host name to search on
-    #
-    declare -A loc_keys
-    loc_keys["sysc"]="/work/drom/sysc-drops"
-    loc_keys["tc"]="/nfs/teams/sw/share/compiler/releases"
-    loc_keys["ip"]="/nfs/teams/ret/share/release"
-    loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
-    loc_keys["fsw"]="/nfs/teams/sw/static/dev-tools/freedom-studio, w64 .zip"
-    loc_keys["fsu"]="/nfs/teams/sw/static/dev-tools/freedom-studio, ubuntu .tar.gz"
-    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip tar.gz, kevinm@login.sifive.com"
-    loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools"
-    loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation"
-    loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk"
-    loc_keys["alg"]="/nfs/teams/sw/share/lib"
-    loc_keys["octane"]="/nfs/teams/sw/share/octane"
-    loc_keys["dl"]="~/Downloads"
-    loc_keys["scratch"]="/scratch/kevinm, , sw01"
-
-    function usage() {
+    function usage() {    
 cat << EndOfUsage        
 A fuzzy file finder for remote(ssh) and local folders.
+
+Configuration:
+
+    gff looks for a configuration file in these places, using the
+    first one found:
+
+      ~/.config/gff/config
+      ~/.gff_config (note: this is a hidden file with a '.' prefix)
+
+    Use the one included in this repo folder as a template.
+
+    This config file defines the remote host to use, and your
+    list of custom shortcuts, and other optional settings.
 
 Usage: gff [-reEshfa] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir> [<subdir>]
 
@@ -123,6 +109,7 @@ EndOfUsage
     }
 
     local extract=false
+    local askExtract=true
     local delete=false
     local sort=true
     local maxdepth=6
@@ -134,21 +121,21 @@ EndOfUsage
     local filter_hidden=true
     local host_ovr=false
 
-    # This is the default <remote-host> to use if none is specifed
-    # on the command line.  I suggest using an dedicated entry from
-    # your .ssh/config file, like this:
-    #
-    # Host remote
-    #   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
-    #   User kevinm
-    #   IdentityFile ~/.ssh/id_rsa_s5
-    #
-    # Specifying the actual host on the ProxyCommand line (sw01 in
-    # this example.) (note, my config has an sw01 alias, but it sets
-    # up tunnels and other things not required here, so I have this
-    # separate 'remote' entry dedicated for this)
-    local search_host=gff_host
-
+    if [ -f ~/.config/gff/config ]; then
+        source ~/.config/gff/config
+    elif [ -f ~/.gff_config ]; then
+        source ~/.gff_config
+    else
+        echo "No gff_config file found!"
+        echo "Looked for:"
+        echo "  ~/.config/gff_config"
+        echo "  ~/.gff_config"
+        echo "  ./gff_config (where this script is located)"
+        echo ""
+        usage
+        return
+    fi
+    
     local OPTIND o
     while getopts "afleEsm:q:rh:" o; do
         case "${o}" in
@@ -439,6 +426,22 @@ EndOfUsage
     local extracted=false
 
     if ${extract}; then
+        if ${askExtract}; then
+            while true; do
+
+            read -p "Do you want to extract this asset here? (y/n) " yn
+
+            case $yn in 
+                [yY] )
+                    break;;
+                [nN] )
+                    return;;
+                * ) echo invalid response;;
+            esac
+
+            done            
+        fi
+
         local extractors=()
         extractors+=("*.tar.gz,  tar xzf")
         extractors+=("*.tgz,     tar xzf")
@@ -447,19 +450,23 @@ EndOfUsage
         extractors+=("*.zip,     unzip -o")
         extractors+=("*.7z,      7z x -aoa")
 
-
         for extractor in ${!extractors[@]}; do
             local ex=()
             parse_csv ex "${extractors[${extractor}]}"
-            if [ ${local_file} = ${ex[0]} ]; then
-                if ! [ -x "$(command -v ${ex[1]})" ]; then
-                    echo "\"${ex[1]}\" not found.  Please install it, if needed, and"
-                    echo "put it on your path."
+
+            if [[ ${local_file} = ${ex[0]} ]]; then
+
+                local cmdtokens=(${ex[1]})
+                if ! [ -x "$(command -v ${cmdtokens[0]})" ]; then
+                    echo "\"${cmdtokens[0]}\" not found.  Please install it, if needed, and"
+                    echo "ensure it is on your path."
                     return
                 fi
+
                 # Do the extraction!
                 echo "Extracting ${local_file}..."
                 eval ${ex[1]} ${local_file} && extracted=true
+                break
             fi
         done
 
