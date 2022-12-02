@@ -1,0 +1,20 @@
+# git aliases
+alias gp='git pull'
+alias co='git checkout'
+
+# Copy text, from stdin, to clibaord (i.e.  cat <file> | 2cb)
+alias 2cb='xclip -selection clipboard'
+
+# Paste text on clipboard into command (i.e. cat `fcb` ><file>)
+alias fcb='xclip -o -selection clipboard'
+
+# Change-directory to the folder path on the clipboard
+alias cdcb='cd `xclip -o -selection clipboard`'
+
+# Copy the current folder to the clipboard, without terminating newline
+alias dcb='pwd | xclip -i -r'
+
+md () {
+    mkdir "$1"
+    cd "$1"
+}
