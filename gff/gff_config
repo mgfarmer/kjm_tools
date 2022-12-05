@@ -1,0 +1,56 @@
+# Declare an array of handy shortcuts. The key can be provided
+# on the command line as the <search_dir> and the full path
+# will be substituted.  Add as many as you want.
+#
+# Each shortcut consists of up to three fields, separated 
+# by commas.  The fields are:
+#
+# 1. (required) the base folder name to be searched
+# 2. (optional) an initial query string for fzf 
+# 3. (optional) a host name to search on
+#
+declare -A loc_keys
+loc_keys["sysc"]="/work/drom/sysc-drops"
+loc_keys["tc"]="/nfs/teams/sw/share/compiler/releases"
+loc_keys["ip"]="/nfs/teams/ret/share/release"
+loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
+loc_keys["fsw"]="/nfs/teams/sw/static/dev-tools/freedom-studio, w64 .zip"
+loc_keys["fsu"]="/nfs/teams/sw/static/dev-tools/freedom-studio, ubuntu .tar.gz"
+loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip tar.gz, kevinm@login.sifive.com"
+loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools"
+loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation"
+loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk"
+loc_keys["alg"]="/nfs/teams/sw/share/lib"
+loc_keys["octane"]="/nfs/teams/sw/share/octane"
+loc_keys["dl"]="~/Downloads"
+loc_keys["scratch"]="/scratch/kevinm, , sw01"
+
+# This is the default ssh host connection.  It could be host
+# entry from your .ssh/config file or just <username>@<host>
+local search_host=gff_host
+
+# Set this to 'true' if you want to always extract archives
+# Default: 'false'
+# Also set 'true' with command line param: -e
+# extract=true
+
+# Set this to 'true' if you want to be prompted before extracting
+# askExtract=false
+
+# Set this to 'true' to delete the assets after extraction. 
+# Default: false
+# Also set 'true' with command line param: -d
+# delete=true
+
+# This defines how deep to search for files in the specified
+# folder.
+# Default: 6
+# Also set with command line param: -m <num>
+# maxdepth=6
+
+# Set this to 'false' to include hidden folder and files in
+# the search list.
+# Default: true
+# Also set 'true' with command line param: -a (for 'all')
+# filter_hidden=false
+

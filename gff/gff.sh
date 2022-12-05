@@ -1,34 +1,21 @@
 gff() {
 
-    # Declare an array of handy shortcuts. The key can be provided
-    # on the command line as the <search_dir> and the full path
-    # will be substituted.  Add as many as you want.
-    #
-    # Each shortcut consists of up to three fields, separated 
-    # by commas.  The fields are:
-    #
-    # 1. (required) the base folder name to be searched
-    # 2. (optional) an initial query string for fzf 
-    # 3. (optional) a host name to search on
-    #
-    declare -A loc_keys
-    loc_keys["compiler"]="/nfs/teams/sw/share/compiler/releases"
-    loc_keys["ip"]="/nfs/teams/ret/share/release"
-    loc_keys["fs"]="/nfs/teams/sw/static/dev-tools/freedom-studio"
-    loc_keys["fsw"]="/nfs/teams/sw/static/dev-tools/freedom-studio, w64 .zip"
-    loc_keys["fsu"]="/nfs/teams/sw/static/dev-tools/freedom-studio, ubuntu .tar.gz"
-    loc_keys["fsorca"]="/nfs/teams/sw/static/dev-tools/freedom-studio/orca/sifive-internal, .zip tar.gz, kevinm@login.sifive.com"
-    loc_keys["ft"]="/nfs/teams/sw/static/dev-tools/freedom-tools"
-    loc_keys["cxdoc"]="/nfs/teams/cx/share/documentation"
-    loc_keys["fusdk"]="/nfs/teams/sw/share/fusdk"
-    loc_keys["alg"]="/nfs/teams/sw/share/lib"
-    loc_keys["octane"]="/nfs/teams/sw/share/octane"
-    loc_keys["dl"]="~/Downloads"
-    loc_keys["scratch"]="/scratch/kevinm, , remote"
-
-    function usage() {
+    function usage() {    
 cat << EndOfUsage        
 A fuzzy file finder for remote(ssh) and local folders.
+
+Configuration:
+
+    gff looks for a configuration file in these places, using the
+    first one found:
+
+      ~/.config/gff/config
+      ~/.gff_config (note: this is a hidden file with a '.' prefix)
+
+    Use the one included in this repo folder as a template.
+
+    This config file defines the remote host to use, and your
+    list of custom shortcuts, and other optional settings.
 
 Usage: gff [-reEshfa] [-m maxdepth] [-q querystring] [-r <search_host>] <search_dir> [<subdir>]
 
@@ -72,6 +59,35 @@ flag to force a remote search.
 where a shortcut defines a top level folder path, but you want to
 drill down a bit more when using the shortcut.
 
+RUNNING ON WINDOWS 
+
+It can be done!
+
+You can, of course, run it in a WSL Linux instance. But you can
+also run it from a Windows command prompt or powershell.  A WSL
+linux installation is still required, but you don't have to start
+a Linux terminal to run it, but some setup is required:
+
+1. Setup a WSL Ubuntu instance
+2. Clone/copy this script into that instance
+3. Modify your .bashrc to source this script on login.
+4. Install fzf: sudo apt install fzf
+5. Set up ssh access to the remote machines in WSL
+
+Windows provides a "native" bash.exe in the System32 directory that
+can be used to run this script.  The first time you run it, it may
+take a while because Windows is spinning up the Ubuntu machine in 
+the background.  You can run it like:
+
+  C:\Windows\System32\bash.exe -i -c "gff <params>"
+
+But that is too cumbersome.  So there is also a gff.cmd file you
+can install into a folder on your path. Which can be run as:
+
+  gff <params>
+
+SHORTCUTS
+
 Shortcuts are easy to remember keys for common search paths that
 you use.  Add or remove shortcuts by editing this script.  It's easy.
 
@@ -93,6 +109,7 @@ EndOfUsage
     }
 
     local extract=false
+    local askExtract=true
     local delete=false
     local sort=true
     local maxdepth=6
@@ -104,21 +121,21 @@ EndOfUsage
     local filter_hidden=true
     local host_ovr=false
 
-    # This is the default <remote-host> to use if none is specifed
-    # on the command line.  I suggest using an dedicated entry from
-    # your .ssh/config file, like this:
-    #
-    # Host remote
-    #   ProxyCommand ssh -q -l %r login.sifive.com nc -q0 sw01 %p
-    #   User kevinm
-    #   IdentityFile ~/.ssh/id_rsa_s5
-    #
-    # Specifying the actual host on the ProxyCommand line (sw01 in
-    # this example.) (note, my config has an sw01 alias, but it sets
-    # up tunnels and other things not required here, so I have this
-    # separate 'remote' entry dedicated for this)
-    local search_host=remote
-
+    if [ -f ~/.config/gff/config ]; then
+        source ~/.config/gff/config
+    elif [ -f ~/.gff_config ]; then
+        source ~/.gff_config
+    else
+        echo "No gff_config file found!"
+        echo "Looked for:"
+        echo "  ~/.config/gff_config"
+        echo "  ~/.gff_config"
+        echo "  ./gff_config (where this script is located)"
+        echo ""
+        usage
+        return
+    fi
+    
     local OPTIND o
     while getopts "afleEsm:q:rh:" o; do
         case "${o}" in
@@ -183,6 +200,7 @@ EndOfUsage
         return
     fi
 
+
     # Expand ~'s in folder names'
     # https://stackoverflow.com/a/29310477/45206
     expandPath() {
@@ -237,10 +255,11 @@ EndOfUsage
 
     local is_local=false
 
-    if [ ${search_host} == $(hostname) ]; then is_local=true; fi
+    if [ "${search_host}" == "$(hostname)" ]; then is_local=true; fi
 
     local search_dir=${1}
     local subdir=${2}
+
 
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
@@ -277,6 +296,14 @@ EndOfUsage
     fi
 
     if ( [ -d ${search_dir} ]  || [ -f ${search_dir} ] ) && ! ${force_remote}; then is_local=true; fi
+
+    if ! ${is_local} && [ "${search_host}" == "" ]; then
+        echo "Oops! search_host is not defined.  I don't know where to go!"
+        echo "Make sure this variable is defined in you gff_config."
+        echo ""
+        usage
+        return
+    fi
 
     local remote_file
 
@@ -321,9 +348,18 @@ EndOfUsage
         local shell_cmd
         local formatter="%TY-%Tm-%Td %Tl:%TM%Tp  %12s %p\n"
 
+        local host_alias
+
         local host=${search_host}
         if ${is_local}; then
             host=$(hostname)
+        else
+            # resolve any alias to the real hostname
+            host_alias=${host}
+            host=$(ssh -G ${host} | awk '$1 == "hostname" { print $2 }')
+            if ! [ "${host}" == "${host_alias}" ]; then
+                host="${host_alias} => ${host}"
+            fi
         fi
 
         fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
@@ -408,34 +444,56 @@ EndOfUsage
         extractors+=("*.zip,     unzip -o")
         extractors+=("*.7z,      7z x -aoa")
 
-
         for extractor in ${!extractors[@]}; do
             local ex=()
             parse_csv ex "${extractors[${extractor}]}"
-            if [ ${local_file} = ${ex[0]} ]; then
-                if ! [ -x "$(command -v ${ex[1]})" ]; then
-                    echo "\"${ex[1]}\" not found.  Please install it, if needed, and"
-                    echo "put it on your path."
+
+            if [[ ${local_file} = ${ex[0]} ]]; then
+
+                local cmdtokens=(${ex[1]})
+                if ! [ -x "$(command -v ${cmdtokens[0]})" ]; then
+                    echo "\"${cmdtokens[0]}\" not found.  Please install it, if needed, and"
+                    echo "ensure it is on your path."
                     return
                 fi
+
+                if ${askExtract}; then
+                    while true; do
+
+                    read -p "Do you want to extract this asset here? (y/n) " yn
+
+                    case $yn in 
+                        [yY] )
+                            break;;
+                        [nN] )
+                            return;;
+                        * ) echo invalid response;;
+                    esac
+
+                    done            
+                fi
+
                 # Do the extraction!
                 echo "Extracting ${local_file}..."
                 eval ${ex[1]} ${local_file} && extracted=true
+                break
             fi
         done
 
-        if ${extracted} && ${delete}; then
-            if $same_file; then
-                echo "Not deleting ${local_file} because it is the source file."
-            else
-                echo "Removing ${local_file}"
-                rm ${local_file}
+        if ${extracted}; then
+            if ${delete}; then
+                if $same_file; then
+                    echo "Not deleting ${local_file} because it is the source file."
+                else
+                    echo "Removing ${local_file}"
+                    rm ${local_file}
+                fi
             fi
+            return
         fi
-    else
-        # Just ls the local file for the user
-        ls -l ${local_file}
     fi
 
+    # Just ls the local file for the user
+    ls -l ${local_file}
     return
 }
