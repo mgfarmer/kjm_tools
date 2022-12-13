@@ -1,15 +1,17 @@
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
 
 fhelp() {
-    echo "fdp           : select and goto a parent folder"
-    echo "fd            : select and goto child folder"
+    echo "cdp           : select and goto a parent folder"
+    echo "cdc           : select and goto any child folder"
+    echo "cdi           : select and goto immediate child folder"
     echo "cdr           : cd to the current repo root"
+    echo "cdrepo        : cd to selected repo"
     echo "fdr           : select and goto child of current repo root"
     echo "fh            : search and execute command from history"
     echo "getip         : seach and download IP package from RMT"
 }
 
-fdp() {
+cdp() {
   local declare dirs=()
   get_parent_dirs() {
     if [[ -d "${1}" ]]; then dirs+=("$1"); else return; fi
@@ -23,20 +25,27 @@ fdp() {
   cd "$DIR"
 }
 
-fd() {
+cdc() {
   local dir
   dir=$(find . -path '*/\.*' -prune \
-                  -o -type d -print 2> /dev/null | fzf +m) &&
+                  -o -type d -print 2> /dev/null | fzf -1 +m) &&
   cd "$dir"
 }
 
-fd1() {
+cdi() {
   local dir
   local qs="$1"
   dir=$(find . -maxdepth 1 -path '*/\.*' -prune \
-                  -o -type d -print 2> /dev/null | fzf -e +m --query="${qs}") &&
+                  -o -type d -print 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
   cd "$dir"
-  echo "query: $qs"
+}
+
+cdrepo() {
+  local dir
+  local qs="$1"
+  dir=$(find ~/git/ -maxdepth 1 -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
+  cd "$dir"
 }
 
 # get the current repo root folder name
