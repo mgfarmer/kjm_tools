@@ -1,0 +1,1 @@
+start javaw -jar C:\bin\SshTunnelTray.jar ssh tunnel
