@@ -25,9 +25,18 @@ fdp() {
 
 fd() {
   local dir
-  dir=$(find ${1:-.} -path '*/\.*' -prune \
+  dir=$(find . -path '*/\.*' -prune \
                   -o -type d -print 2> /dev/null | fzf +m) &&
   cd "$dir"
+}
+
+fd1() {
+  local dir
+  local qs="$1"
+  dir=$(find . -maxdepth 1 -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -e +m --query="${qs}") &&
+  cd "$dir"
+  echo "query: $qs"
 }
 
 # get the current repo root folder name
