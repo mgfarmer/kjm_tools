@@ -56,12 +56,14 @@ To ensure all is working, you should be able to:
 
 and be immediately logged into the host server.  If not, you got some fixin' to do.
 
-### fzf
+### fzf (and others)
 
 Several of these tools depend on the **fzf** tool. It needs to be installed
 on your system.  This is usually done by:
 
-```sudo apt install fzf```
+Linux: ```sudo apt install fzf```
+
+MacOS: ```brew install fzf coreutils```
 
 Or equivalent for your chosen Linux flavor of the month.
 
