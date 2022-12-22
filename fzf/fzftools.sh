@@ -4,12 +4,12 @@ fhelp() {
     echo "cdp           : select and goto a parent folder"
     echo "cdc           : select and goto any child folder"
     echo "cdi           : select and goto immediate child folder"
-    echo "cdr           : cd to the current repo root"
+    echo "cdrr          : cd to the current repo root"
     echo "cdrepo        : cd to selected repo"
-    echo "fdr           : select and goto child of current repo root"
-    echo "fh            : search and execute command from history"
+    echo "ch            : search and execute command from history"
 }
 
+# cd-parent: cd to any parent folder in the current path
 cdp() {
   local declare dirs=()
   get_parent_dirs() {
@@ -24,6 +24,7 @@ cdp() {
   cd "$DIR"
 }
 
+# cd-child: select and goto any child folder
 cdc() {
   local dir
   dir=$(find . -path '*/\.*' -prune \
@@ -31,6 +32,7 @@ cdc() {
   cd "$dir"
 }
 
+# cd-immediate-child: select and goto immediate child folder.  
 cdi() {
   local dir
   local qs="$1"
@@ -39,6 +41,9 @@ cdi() {
   cd "$dir"
 }
 
+# cd-repo: cd to a repo
+# assumes you keep all your git repo clones in a single folder (like ~/git)
+# if you put them elsewhere, you'll need to edit this function
 cdrepo() {
   local dir
   local qs="$1"
@@ -48,7 +53,7 @@ cdrepo() {
 }
 
 # get the current repo root folder name
-up_to_repo () { 
+_up_to_repo () { 
     # cd up to the repo root folder
     local p=${PWD}
     # echo $p
@@ -57,22 +62,17 @@ up_to_repo () {
         if [[ "${p}" == "/" ]]; then
             >&2 echo "You are not in a git repo..."
             echo "."
-            return;
+            return ;
         fi
     done
     echo ${p}
 }
 
 # cd to the current repo root
-cdr () {
-    cd $(up_to_repo)
+cdrr () {
+    cd $(_up_to_repo)
 }
 
-# fzf cd from currentrepo root
-fdr () {
-    cdc $(up_to_repo)
-}
-
-fh() {
+ch() {
   eval $( ([ -n "$ZSH_NAME" ] && fc -l 1 || history) | fzf +s --tac | sed -E 's/ *[0-9]*\*? *//' | sed -E 's/\\/\\\\/g')
 }
