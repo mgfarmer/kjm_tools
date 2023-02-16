@@ -1,15 +1,16 @@
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
 
 fhelp() {
-    echo "fdp           : select and goto a parent folder"
-    echo "fd            : select and goto child folder"
-    echo "cdr           : cd to the current repo root"
-    echo "fdr           : select and goto child of current repo root"
-    echo "fh            : search and execute command from history"
-    echo "getip         : seach and download IP package from RMT"
+    echo "cdp           : select and goto a parent folder"
+    echo "cdc           : select and goto any child folder"
+    echo "cdi           : select and goto immediate child folder"
+    echo "cdrr          : cd to the current repo root"
+    echo "cdrepo        : cd to selected repo"
+    echo "ch            : search and execute command from history"
 }
 
-fdp() {
+# cd-parent: cd to any parent folder in the current path
+cdp() {
   local declare dirs=()
   get_parent_dirs() {
     if [[ -d "${1}" ]]; then dirs+=("$1"); else return; fi
@@ -23,46 +24,55 @@ fdp() {
   cd "$DIR"
 }
 
-fd() {
+# cd-child: select and goto any child folder
+cdc() {
   local dir
-  dir=$(find ${1:-.} -path '*/\.*' -prune \
-                  -o -type d -print 2> /dev/null | fzf +m) &&
+  dir=$(find . -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -1 +m) &&
+  cd "$dir"
+}
+
+# cd-immediate-child: select and goto immediate child folder.  
+cdi() {
+  local dir
+  local qs="$1"
+  dir=$(find . -maxdepth 1 -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
+  cd "$dir"
+}
+
+# cd-repo: cd to a repo
+# assumes you keep all your git repo clones in a single folder (like ~/git)
+# if you put them elsewhere, you'll need to edit this function
+cdrepo() {
+  local dir
+  local qs="$1"
+  dir=$(find ~/git/ -maxdepth 1 -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
   cd "$dir"
 }
 
 # get the current repo root folder name
-up_to_repo () { 
+_up_to_repo () { 
     # cd up to the repo root folder
     local p=${PWD}
+    # echo $p
     while ! [ -d ${p}/.git ]; do
         p="$(dirname "$p")";
-        if [ "${p}" == "/" ]; then
+        if [[ "${p}" == "/" ]]; then
             >&2 echo "You are not in a git repo..."
             echo "."
-            return;
+            return ;
         fi
     done
     echo ${p}
 }
 
 # cd to the current repo root
-cdr () {
-    cd $(up_to_repo)
+cdrr () {
+    cd $(_up_to_repo)
 }
 
-# fzf cd from currentrepo root
-fdr () {
-    fd $(up_to_repo)
-}
-
-fh() {
+ch() {
   eval $( ([ -n "$ZSH_NAME" ] && fc -l 1 || history) | fzf +s --tac | sed -E 's/ *[0-9]*\*? *//' | sed -E 's/\\/\\\\/g')
-}
-
-getip() {
-  local dir
-  local tokens
-  dir=$(ssh sw01 "find /nfs/teams/ret/share/release -name \*.gz \
-                  -printf \"%Tx %p\n\" 2> /dev/null" | sort -n -r | fzf +s +m) && \
-        tokens=( $dir ) && scp sw01:${tokens[1]} .
 }

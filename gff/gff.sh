@@ -101,6 +101,12 @@ by commas.  The fields are:
 The following shortcut keywords are currently configured:
 
 EndOfUsage
+        if [ -f ~/.config/gff/config ]; then
+            echo "Using: ~/.config/gff/config"
+        elif [ -f ~/.gff_config ]; then
+            echo "Using: ~/.gff_config"
+        fi
+
 
         for key in ${!loc_keys[@]}; do
             printf "  %-8s => %s\n" ${key} "${loc_keys[${key}]}"
@@ -177,6 +183,7 @@ EndOfUsage
     done
     shift $((OPTIND-1))
 
+    local dest_dir=${PWD}
 
     # If you do most of your searching on a local machine, you can do this:
     #
@@ -260,7 +267,6 @@ EndOfUsage
     local search_dir=${1}
     local subdir=${2}
 
-
     # If a shortcut was provided, find and substitute the full path.
     for key in ${!loc_keys[@]}; do
         if [ ${search_dir} == ${key} ]; then
@@ -285,6 +291,13 @@ EndOfUsage
                 search_host="\"${ho}\""
             fi
 
+            # Apply the destination folder, if provided
+            local dd=${fa[3]}
+            if ! [ "${dd}" == "" ]; then
+                dest_dir="\"${dd}\""
+            fi
+
+            echo "Dest: ${dest_dir}"
             break
         fi
     done
@@ -362,7 +375,7 @@ EndOfUsage
             fi
         fi
 
-        fzf_params="--exit-0 --header=\"(${host}) Searching: ${search_dir}\""
+        fzf_params="--exact --exit-0 --header=\"(${host}) Searching: ${search_dir}\""
 
         local filter_param
         if ${filter_hidden}; then
@@ -420,6 +433,10 @@ EndOfUsage
     else
         echo "Downloading: ${search_host}:${remote_file}..."
     fi
+
+    pushd ${dest_dir}
+
+    trap `popd ${dest_dir} 2>/dev/null` EXIT
 
     eval ${copy_cmd}
 

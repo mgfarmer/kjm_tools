@@ -18,3 +18,16 @@ md () {
     mkdir "$1"
     cd "$1"
 }
+
+hide () {
+    mv "$1" ".$1" && echo "$1 --> .$1"
+}
+
+unhide () {
+    mv $1 "${1#.}" && echo "$1 --> ${1#.}"
+}
+
+shorten () {
+    local dir=`echo $1 | sed -re 's/FreedomStudio-([0-9]+)-([0-9]+)-([0-9]{4})[0-9]*-.*-(.*)/FS-\1-\2-\3/g'`
+    mv "$1" "$dir"
+}
