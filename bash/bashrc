@@ -1,0 +1,31 @@
+# git aliases
+alias gp='git pull'
+alias co='git checkout'
+
+# Make folder and cd into it...
+md () {
+    mkdir "$1"
+    cd "$1"
+}
+
+# Hide a file by prepending it with a "."
+hide () {
+    mv "$1" ".$1" && echo "$1 --> .$1"
+}
+
+# Unhide a hidden file by removing "." prefix
+unhide () {
+    mv $1 "${1#.}" && echo "$1 --> ${1#.}"
+}
+
+# I use this on headless Ubuntu in ordr to unlock the 
+# gnome keyrign after booting.
+function unlock-keyring ()
+{
+    read -rsp "Password: " pass
+    export $(echo -n "$pass" | gnome-keyring-daemon --replace --unlock)
+    unset pass
+}
+
+source $HOME/git/kjm_tools/fzf/fzftools
+

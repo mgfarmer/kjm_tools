@@ -1,0 +1,3 @@
+# Setup preffered git prompt
+export PS1='\u:\[\e[32m\]\w\[\e[91m\]$(__git_ps1)\[\e[00m\] $ '
+

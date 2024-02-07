@@ -1,3 +1,10 @@
+if ! command -v fzf &> /dev/null
+then
+    echo "Program 'fzf' could not be found. Please install it"
+    echo "> sudo apt install fzf"
+    return
+fi
+
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
 
 fhelp() {
@@ -5,7 +12,7 @@ fhelp() {
     echo "cdc           : select and goto any child folder"
     echo "cdi           : select and goto immediate child folder"
     echo "cdrr          : cd to the current repo root"
-    echo "cdrepo        : cd to selected repo"
+    echo "cdr           : cd to selected repo"
     echo "ch            : search and execute command from history"
 }
 
@@ -44,7 +51,7 @@ cdi() {
 # cd-repo: cd to a repo
 # assumes you keep all your git repo clones in a single folder (like ~/git)
 # if you put them elsewhere, you'll need to edit this function
-cdrepo() {
+cdr() {
   local dir
   local qs="$1"
   dir=$(find ~/git/ -maxdepth 1 -path '*/\.*' -prune \
