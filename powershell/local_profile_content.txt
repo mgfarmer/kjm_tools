@@ -1,0 +1,2 @@
+#. C:\Users\kevin\git\kjm_tools\powershell\PowershellProfile.ps1
+Invoke-Expression (Invoke-Webrequest 'https://github.com/mgfarmer/kjm_tools/raw/main/powershell/PowershellProfile.ps1').content
