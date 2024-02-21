@@ -3,8 +3,8 @@ if ($host.Name -eq 'ConsoleHost') {
     Set-Alias -Name which -Value where
     
     oh-my-posh init pwsh --config https://raw.githubusercontent.com/mgfarmer/kjm_tools/main/powershell/oh-my-posh/agnoster.json | Invoke-Expression
-    Import-Module posh-git
-    $env:POSH_GIT_ENABLED = $true
+    #Import-Module posh-git
+    #$env:POSH_GIT_ENABLED = $true
 
     Import-Module PSReadLine
     #Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
