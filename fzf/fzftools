@@ -7,7 +7,7 @@ fi
 
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
 
-fhelp() {
+function fhelp() {
     echo "cdp           : select and goto a parent folder"
     echo "cdc           : select and goto any child folder"
     echo "cdi           : select and goto immediate child folder"
@@ -17,7 +17,7 @@ fhelp() {
 }
 
 # cd-parent: cd to any parent folder in the current path
-cdp() {
+function cdp() {
   local declare dirs=()
   get_parent_dirs() {
     if [[ -d "${1}" ]]; then dirs+=("$1"); else return; fi
@@ -32,7 +32,7 @@ cdp() {
 }
 
 # cd-child: select and goto any child folder
-cdc() {
+function cdc() {
   local dir
   dir=$(find . -path '*/\.*' -prune \
                   -o -type d -print 2> /dev/null | fzf -1 +m) &&
@@ -40,7 +40,7 @@ cdc() {
 }
 
 # cd-immediate-child: select and goto immediate child folder.  
-cdi() {
+function cdi() {
   local dir
   local qs="$1"
   dir=$(find . -maxdepth 1 -path '*/\.*' -prune \
@@ -51,7 +51,7 @@ cdi() {
 # cd-repo: cd to a repo
 # assumes you keep all your git repo clones in a single folder (like ~/git)
 # if you put them elsewhere, you'll need to edit this function
-cdr() {
+function cdr() {
   local dir
   local qs="$1"
   dir=$(find ~/git/ -maxdepth 1 -path '*/\.*' -prune \
@@ -60,7 +60,7 @@ cdr() {
 }
 
 # get the current repo root folder name
-_up_to_repo () { 
+function _up_to_repo() { 
     # cd up to the repo root folder
     local p=${PWD}
     # echo $p
@@ -76,10 +76,24 @@ _up_to_repo () {
 }
 
 # cd to the current repo root
-cdrr () {
+function cdrr() {
     cd $(_up_to_repo)
 }
 
-ch() {
+function ch() {
   eval $( ([ -n "$ZSH_NAME" ] && fc -l 1 || history) | fzf +s --tac | sed -E 's/ *[0-9]*\*? *//' | sed -E 's/\\/\\\\/g')
+}
+
+function fkill() {
+    local pid 
+    if [ "$UID" != "0" ]; then
+        pid=$(ps -f -u $UID | sed 1d | fzf -m | awk '{print $2}')
+    else
+        pid=$(ps -ef | sed 1d | fzf -m | awk '{print $2}')
+    fi  
+
+    if [ "x$pid" != "x" ]
+    then
+        echo $pid | xargs kill -${1:-9}
+    fi  
 }

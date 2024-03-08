@@ -1,0 +1,21 @@
+alias teams='flatpak run com.github.IsmaelMartinez.teams_for_linux &'
+
+alias gp='git pull'
+alias co='git checkout'
+
+# Make folder and cd into it...
+function md() {
+    mkdir "$1"
+    cd "$1"
+}
+
+# Hide a file by prepending it with a "."
+function hide() {
+    mv "$1" ".$1" && echo "$1 --> .$1"
+}
+
+# Unhide a hidden file by removing "." prefix
+function unhide() {
+    mv $1 "${1#.}" && echo "$1 --> ${1#.}"
+}
+

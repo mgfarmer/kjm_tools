@@ -4,7 +4,8 @@ source $HOME/git/kjm_tools/aliases
 # gnome keyrign after booting.
 function unlock()
 {
-    read -rsp "Password: " pass
+    read -rs "pass?Password: "
+    echo
     export $(echo -n "$pass" | gnome-keyring-daemon --daemonize --replace --unlock)
     unset pass
 }
