@@ -10,36 +10,51 @@ SetTitleMatchMode, 2
 SetCapsLockState, alwaysoff
 
 ; Cycle: Windows --> RDP --> Linux --> Windows
-#if !WinActive("ahk_class TscShellContainerClass") and !WinActive("ahk_exe nxplayer.bin")
+#if !WinActive("system76-pc.local") and !WinActive("192.168.1.11")
   ^CapsLock::
-    if (WinExist("ahk_class TscShellContainerClass")) {
+    if (WinExist("system76-pc.local")) {
       Sleep 50
-      WinActivate, ahk_class TscShellContainerClass
+      ;WinActivate, "system76-pc.local"
+      WinActivate  ahk_class TscShellContainerClass, 192.168.1.11
     }
   return
 #if
 
 ; Remote Desktop Connection
-#if WinActive("ahk_class TscShellContainerClass")
+;#if WinActive("ahk_class TscShellContainerClass")
+#if WinActive("192.168.1.11")
   ^CapsLock::           ; Ctrl+Caps Lock (couldn't make Ctrl+Shift+Caps Lock work for some reason
     ; Need a short sleep here for focus to restore properly.
     Sleep 50
     WinMinimize A    ; need A to specify Active window
-    if (WinExist("ahk_exe nxplayer.bin")) {
-      Sleep 50
-      WinActivate, ahk_exe nxplayer.bin
+    if (WinExist("system76-pc.local")) {
+      WinActivate ahk_class TscShellContainerClass, system76
     }
     ;MsgBox, Received Remote Desktop minimize hotkey    ; uncomment for debugging
   return
 #if
 
-; NoMachine System76-PC
-#if WinActive("ahk_exe nxplayer.bin")
+;
+;system76-pc.local - Remote Desktop Connection
+; Remote Desktop Connection
+;#if WinActive("ahk_class TscShellContainerClass")
+#if WinActive("system76-pc.local")
   ^CapsLock::           ; Ctrl+Caps Lock (couldn't make Ctrl+Shift+Caps Lock work for some reason
     ; Need a short sleep here for focus to restore properly.
     Sleep 50
     WinMinimize A    ; need A to specify Active window
-    ;MsgBox, Minimize NoMachine    ; uncomment for debugging
+    ;MsgBox, Received Remote Desktop minimize hotkey    ; uncomment for debugging
   return
 #if
+
+; NoMachine System76-PC
+;#if WinActive("ahk_exe nxplayer.bin")
+;#if WinActive("NoMachine - System76-PC")
+;  ^CapsLock::           ; Ctrl+Caps Lock (couldn't make Ctrl+Shift+Caps Lock work for some reason
+;    ; Need a short sleep here for focus to restore properly.
+;    Sleep 50
+;    WinMinimize A    ; need A to specify Active window
+;    ;MsgBox, Minimize NoMachine    ; uncomment for debugging
+;  return
+;#if
 
