@@ -3,9 +3,28 @@ alias teams='flatpak run com.github.IsmaelMartinez.teams_for_linux &'
 alias gp='git pull'
 alias co='git checkout'
 
+# alias gyr=`wezterm start --workspace gyrfalcon`
+
+function clone() {
+    if [ -z "${1}" ]; then
+        return
+    fi
+    repodir=$2
+    if [ -z "${repodir}" ]; then
+        basename=$(basename $1)
+        repodir=${basename%.*}
+    fi
+    git clone $1 $repodir
+    cd $repodir
+}
+
+function pp() {
+    tr ':' '\n' <<<"$PATH"
+}
+
 # Make folder and cd into it...
 function md() {
-    mkdir "$1"
+    mkdir -p "$1"
     cd "$1"
 }
 
@@ -19,3 +38,10 @@ function unhide() {
     mv $1 "${1#.}" && echo "$1 --> ${1#.}"
 }
 
+function c() {
+    if [ -z "${1}" ]; then
+        code -n .
+    else
+        code -n $1
+    fi
+}

@@ -59,6 +59,14 @@ function cdr() {
   cd "$dir"
 }
 
+function cr() {
+  local dir
+  local qs="$1"
+  dir=$(find ~/git/ -maxdepth 1 -path '*/\.*' -prune \
+                  -o -type d -print 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
+  code "$dir"
+}
+
 # get the current repo root folder name
 function _up_to_repo() { 
     # cd up to the repo root folder
