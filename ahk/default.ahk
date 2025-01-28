@@ -40,3 +40,9 @@ LAPTOP := "kmills-xps15.local"
     WinMinimize A    ; need A to specify Active window
   return
 #if
+
+!CapsLock::
+    Run, "C:\Program Files\TechSmith\Snagit 2024\SnagitCapture.exe" /capture
+
+<#Z::
+    MsgBox, Hello

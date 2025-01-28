@@ -2,6 +2,10 @@ if ($host.Name -eq 'ConsoleHost') {
     Remove-Item alias:\where -Force
     Set-Alias -Name which -Value where
     
+    function New-Link ($target, $link) {
+        New-Item -Path $link -ItemType SymbolicLink -Value $target
+    }
+
     oh-my-posh init pwsh --config https://raw.githubusercontent.com/mgfarmer/kjm_tools/main/powershell/oh-my-posh/agnoster.json | Invoke-Expression
     #Import-Module posh-git
     #$env:POSH_GIT_ENABLED = $true
