@@ -49,21 +49,6 @@ config.keys = {
     action = wezterm.action.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
   },
   {
-    key = 'u',
-    mods = 'LEADER',
-    action = wezterm.action.SwitchToWorkspace { name = 'gyrfalcon-ui' },
-  },
-  {
-    key = 'c',
-    mods = 'LEADER',
-    action = wezterm.action.SwitchToWorkspace { name = 'gyrfalcon-cloud' },
-  },
-  {
-    key = 't',
-    mods = 'LEADER',
-    action = wezterm.action.SwitchToWorkspace { name = 'gyrfalcon-tools' },
-  },
-  {
     key = '\\',
     mods = 'LEADER',
     action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
@@ -85,16 +70,16 @@ local function createWorkspace(folder)
     cwd = project_dir,
     args = args,
   }
-  local pane2 = pane1:split {
-    direction = 'Top', 
-    size = 0.33,
-    cwd = project_dir,
-  }
-  local pane2 = pane1:split {
-    direction = 'Top', 
-    size = 0.33,
-    cwd = project_dir,
-  }
+  -- local pane2 = pane1:split {
+  --   direction = 'Top', 
+  --   size = 0.33,
+  --   cwd = project_dir,
+  -- }
+  -- local pane2 = pane1:split {
+  --   direction = 'Top', 
+  --   size = 0.33,
+  --   cwd = project_dir,
+  -- }
 
 end
 
@@ -106,10 +91,7 @@ wezterm.on('gui-startup', function(cmd)
     args = cmd.args
   end
 
-  createWorkspace('/git/gyrfalcon-ui')
-  createWorkspace('/git/gyrfalcon-tools')
-  createWorkspace('/git/gyrfalcon-cloud')
-  createWorkspace('/git/gyrfalcon-cdk')
+  createWorkspace('/git')
 
 end)
 
