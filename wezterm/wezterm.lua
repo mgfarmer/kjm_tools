@@ -8,24 +8,31 @@ local act = wezterm.action
 -- This will hold the configuration.
 local config = wezterm.config_builder()
 
--- config.window_decorations = 'RESIZE'
-
 config.initial_rows = 50
 config.initial_cols = 132
 
 config.font = wezterm.font 'JetBrains Mono'
 config.font_size = 14
 
-config.window_background_opacity = 0.85
+-- config.window_background_opacity = 0.85
 config.color_scheme = 'Builtin Dark'
 
-config.scrollback_lines = 10000
+config.window_decorations = "TITLE | RESIZE"
 
-config.launch_menu = {
-  {
-    args = { 'htop' },
-  },
+config.window_frame = {
+  inactive_titlebar_bg = '#353535',
+  active_titlebar_bg = '#2b2042',
+  inactive_titlebar_fg = '#cccccc',
+  active_titlebar_fg = '#ffffff',
+  inactive_titlebar_border_bottom = '#2b2042',
+  active_titlebar_border_bottom = '#2b2042',
+  button_fg = '#cccccc',
+  button_bg = '#2b2042',
+  button_hover_fg = '#ffffff',
+  button_hover_bg = '#3b3052',
 }
+
+config.scrollback_lines = 10000
 
 config.leader = { key = 'w', mods = 'CTRL', timeout_milliseconds = 1000 }
 
@@ -112,7 +119,7 @@ wezterm.on('update-status', function(window, pane)
   -- a Color object, which comes with functionality for lightening
   -- or darkening the colour (amongst other things).
 
-  print(window:effective_config())
+  -- print(window:effective_config())
 
   local bg = wezterm.color.parse(color_scheme.background)
   local fg = color_scheme.foreground
