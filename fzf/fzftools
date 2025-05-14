@@ -105,3 +105,29 @@ function fkill() {
         echo $pid | xargs kill -${1:-9}
     fi  
 }
+
+function rw() {
+    local query="${1:-code}"
+    local window_id
+    local window_list
+
+    # Get a list of windows using wmctrl
+    window_list=$(wmctrl -l | awk '{$3=""; print $0}')
+
+    # Use fzf to select a window
+    window_id=$(echo "$window_list" | fzf -1 --query="$query" | awk '{print $1}')
+
+    # If a window was selected, unmaximize, resize, and bring it to the top
+    if [ -n "$window_id" ]; then
+        # Unmaximize the window
+        wmctrl -i -r "$window_id" -b remove,maximized_vert,maximized_horz
+        
+        # Resize and move the window
+        wmctrl -i -r "$window_id" -e 0,200,100,1920,1080
+        
+        # Bring the window to the top
+        wmctrl -i -a "$window_id"
+    else
+        echo "No window selected."
+    fi
+}
