@@ -67,6 +67,14 @@ function cr() {
   code "$dir"
 }
 
+function cw() {
+  local dir
+  local qs="$1"
+  ws=$(find ~/git/ -maxdepth 1 -name "*.code-workspace" -type f 2> /dev/null | fzf -1 -e +m --query="${qs}") &&
+  code "$ws"
+}
+
+
 # get the current repo root folder name
 function _up_to_repo() { 
     # cd up to the repo root folder

@@ -1,0 +1,13 @@
+[project]
+name = "edid"
+version = "0.1.0"
+description = "EDID Manager - CLI tool for managing EDID data via I2C devices"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0",
+    "smbus2>=0.4.0",
+]
+
+[project.scripts]
+edid = "edid.cli:main"

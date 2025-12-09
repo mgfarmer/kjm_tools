@@ -13,3 +13,104 @@ source $HOME/git/kjm_tools/fzf/fzftools
 
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export WEZTERM_LOG=off
+
+# window_manager
+# Finds a window with a specific title and sets its properties.
+# Arguments:
+#   $1 (optional): The title of the window to find.
+#                  Default: "gyrfalcon-example-projects"
+#   $2 (optional): The desired X position.
+#                  Default: 100
+#   $3 (optional): The desired Y position.
+#                  Default: 100
+#   $4 (optional): The desired width.
+#                  Default: 1920
+#   $5 (optional): The desired height.
+#                  Default: 1080
+function resize() {
+    # Use local variables with parameter expansion to set defaults.
+    # The :- operator means "if the variable is unset or null, use this default".
+    local WINDOW_TITLE="${1:-gyrfalcon-example-projects}"
+    local X_POSITION="${2:-100}"
+    local Y_POSITION="${3:-100}"
+    local WINDOW_WIDTH="${4:-1920}"
+    local WINDOW_HEIGHT="${5:-1080}"
+
+    # Use wmctrl to list all windows, grep to find the line with the title,
+    # and awk to extract the window ID (the first field).
+    WINDOW_ID=$(wmctrl -l | grep -i "${WINDOW_TITLE}" | awk '{print $1}')
+
+    # Check if the window was found.
+    if [ -z "$WINDOW_ID" ]; then
+        echo "Error: No window found with the title '${WINDOW_TITLE}'. Exiting."
+        return 1
+    fi
+
+    echo "Found window with ID: ${WINDOW_ID}"
+    echo "Using position: ${X_POSITION},${Y_POSITION}"
+    echo "Using size: ${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
+
+    # 1. Unmaximize the window using wmctrl.
+    echo "Unmaximizing the window..."
+    wmctrl -ir "$WINDOW_ID" -b remove,maximized_vert,maximized_horz
+
+    # 2. Position the window using xdotool.
+    echo "Positioning the window..."
+    xdotool windowmove "$WINDOW_ID" "$X_POSITION" "$Y_POSITION"
+
+    # 3. Resize the window using xdotool.
+    echo "Resizing the window..."
+    xdotool windowsize "$WINDOW_ID" "$WINDOW_WIDTH" "$WINDOW_HEIGHT"
+
+    echo "Script finished successfully."
+}
+
+# fls (fullpath ls)
+# Lists files matching the given pattern with their full absolute paths.
+# Arguments:
+#   $@ (optional): File patterns to match. Default: all files
+function fls() {
+    local patterns=("$@")
+    
+    # If no arguments provided, default to all files
+    if [ ${#patterns[@]} -eq 0 ]; then
+        patterns=("*")
+    fi
+    
+    # Process each pattern
+    for pattern in "${patterns[@]}"; do
+        for item in $pattern; do
+            if [ -e "$item" ]; then
+                realpath "$item"
+            fi
+        done
+    done
+}
+
+# flsc (fullpath ls clipboard)
+# Lists files matching the given pattern with their full absolute paths and copies to clipboard.
+# Arguments:
+#   $@ (optional): File patterns to match. Default: all files
+function flsc() {
+    local patterns=("$@")
+    
+    # If no arguments provided, default to all files
+    if [ ${#patterns[@]} -eq 0 ]; then
+        patterns=("*")
+    fi
+    
+    local result=""
+    
+    # Process each pattern
+    for pattern in "${patterns[@]}"; do
+        for item in $pattern; do
+            if [ -e "$item" ]; then
+                result+="$(realpath "$item")"$'\n'
+            fi
+        done
+    done
+    
+    # Remove trailing newline and copy to clipboard
+    echo -n "${result%$'\n'}" | xclip -selection clipboard
+    echo "Full paths copied to clipboard"
+}
