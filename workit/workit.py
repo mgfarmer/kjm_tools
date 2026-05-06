@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from pathlib import Path
 
@@ -59,14 +60,30 @@ config = _load_config()
 # --- Prompt helpers ---
 
 
+_DEFAULT_PROMPTS: dict[str, str] = {
+    "summary": (
+        "You are a helpful assistant that writes concise GitHub pull request descriptions.\n"
+        "Given the branch name '${BRANCH}' in the repository '${REPO}', examine the git log "
+        "and diff and write a clear PR title on the first line, followed by a blank line, "
+        "then break the changes into functional blocks and write a level 2 titled single "
+        "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
+        "long and written for a management audience. Do not use filenames or code syntax in "
+        "the description, just describe the changes in plain language. "
+        "Be factual and concise. Do not include filler phrases."
+    ),
+}
+
+
 def _load_prompt(name: str) -> str:
-    """Load a prompt template from ~/.config/workit/{name}.md."""
+    """Load a prompt template from ~/.config/workit/{name}.md, falling back to a built-in default."""
     prompt_file = _CONFIG_DIR / f"{name}.md"
-    if not prompt_file.exists():
-        print(f"Error: Prompt file '{prompt_file}' not found.")
-        print(f"Create it with your prompt template for '{name}'.")
-        raise FileNotFoundError(f"Missing prompt file: {prompt_file}")
-    return prompt_file.read_text().strip()
+    if prompt_file.exists():
+        return prompt_file.read_text().strip()
+    if name in _DEFAULT_PROMPTS:
+        return _DEFAULT_PROMPTS[name]
+    print(f"Error: Prompt file '{prompt_file}' not found.")
+    print(f"Create it with your prompt template for '{name}'.")
+    raise FileNotFoundError(f"Missing prompt file: {prompt_file}")
 
 
 def generate_summary(branch: str, repo: str) -> str:
@@ -108,11 +125,16 @@ def create_jira_workitem(
     if jira_key:
         project = jira_key
     else:
-        project = inquirer.select(
-            message="Select Jira project:",
-            choices=config["jira_projects"],
-            default=config["jira_projects"][0],
-        ).execute()
+        projects = config["jira_projects"]
+        if len(projects) == 1:
+            project = projects[0]
+            print(f"Jira project: {project}")
+        else:
+            project = inquirer.select(
+                message="Select Jira project:",
+                choices=projects,
+                default=projects[0],
+            ).execute()
 
     cmd = [
         "acli",
@@ -253,6 +275,10 @@ def prompt_select_worktree(action_description: str) -> str | None:
     if not worktrees:
         print("No existing worktrees found.")
         return None
+
+    if len(worktrees) == 1:
+        print(f"Auto-selected worktree: {worktrees[0]}")
+        return worktrees[0]
 
     branch = inquirer.select(
         message=f"Select a worktree to {action_description}:",
@@ -467,8 +493,14 @@ def cmd_pr(
     in_worktree: bool = False,
     jira_key: str | None = None,
     yes: bool = False,
+    ai: bool = False,
+    merge: bool = False,
 ) -> int:
     """Create a pull request for the specified worktree branch."""
+    if merge and not yes:
+        print("Error: --merge requires --yes.")
+        return 1
+
     # Verify gh CLI is available
     if not shutil.which("gh"):
         print("Error: GitHub CLI (gh) is not installed.")
@@ -537,10 +569,22 @@ def cmd_pr(
 
     # Open VS Code for the user to write/paste title and summary
     placeholder = f"Title for {branch_name}\n\nReplace this text with your summary content, then save and close this file tab to continue.\n"
+    if ai:
+        print("Generating AI summary via copilot CLI...")
+        print()
+        try:
+            repo = get_repo_slug()
+            ai_output = generate_summary(branch_name, repo)
+            initial_content = ai_output + "\n"
+        except (RuntimeError, FileNotFoundError) as e:
+            print(f"Warning: AI summary failed ({e}). Falling back to template.")
+            initial_content = placeholder
+    else:
+        initial_content = placeholder
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".md", prefix="workit_pr_", delete=False
     ) as tmp:
-        tmp.write(placeholder)
+        tmp.write(initial_content)
         tmp_path = tmp.name
 
     while True:
@@ -595,13 +639,11 @@ def cmd_pr(
         title = f"{issue_id} {title}"
         summary = f"{summary}\n\n{issue_url}"
 
-    print()
-    print(f"Title:   {title}")
-    print()
-    print("Summary:")
-    print()
-    print(summary)
-    print()
+    # print()
+    # print(f"Title:   {title}")
+    # print()
+    # print(summary)
+    # print()
 
     # Create the PR
     print(f"Creating pull request for branch '{branch_name}'...")
@@ -633,6 +675,27 @@ def cmd_pr(
 
     # Add PR URL as a comment on the Jira workitem
     if jira_result:
+        pr_number = pr_url.rstrip("/").rsplit("/", 1)[-1]
+        repo_name = get_repo_name()
+        pr_comment = json.dumps(
+            {
+                "version": 1,
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "PR: "},
+                            {
+                                "type": "text",
+                                "text": f"{repo_name} #{pr_number}",
+                                "marks": [{"type": "link", "attrs": {"href": pr_url}}],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
         comment_result = subprocess.run(
             [
                 "acli",
@@ -643,7 +706,7 @@ def cmd_pr(
                 "--key",
                 issue_id,
                 "--body",
-                pr_url,
+                pr_comment,
             ],
             capture_output=True,
             text=True,
@@ -657,20 +720,26 @@ def cmd_pr(
         print()
 
     # Post-creation menu
-    merge_label = (
-        "Squash-and-merge, then close (no confirmations due to --yes)"
-        if yes
-        else "Squash-and-merge, then close"
-    )
-    action = inquirer.select(
-        message="What would you like to do?",
-        choices=[
-            Choice(value="open", name="Open PR in browser"),
-            Choice(value="merge", name=merge_label),
-            Choice(value="done", name="Done (do nothing)"),
-        ],
-        default="done",
-    ).execute()
+    if merge:
+        action = "merge"
+    else:
+        merge_label = (
+            "Squash-and-merge, then close and delete worktree and branch (no confirmations due to --yes)"
+            if yes
+            else "Squash-and-merge, then close and delete worktree and branch (with confirmations)"
+        )
+        action = inquirer.select(
+            message="What would you like to do?",
+            choices=[
+                Choice(
+                    value="open",
+                    name="Open PR in browser (if you want to assign reviewers, add labels, or merge manually)",
+                ),
+                Choice(value="merge", name=merge_label),
+                Choice(value="done", name="Done (do nothing)"),
+            ],
+            default="done",
+        ).execute()
 
     if action == "open":
         subprocess.run(["gh", "pr", "view", "--head", branch_name, "--web"])
@@ -775,25 +844,80 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="workit",
-        description="Unified git worktree management tool.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent("""\
+            workit — git worktree manager with Jira and GitHub PR integration
+                                    
+            This tool automates the creation and cleanup of git worktrees for 
+            feature branches, and streamlines the PR creation process with optional 
+            Jira ticket creation and closure using optional AI-generated summaries.
+
+            WORKFLOW
+              1. Run 'workit create <branch>' from your main repo checkout.
+                 A new worktree is created at ../<repo>-worktrees/<branch> and
+                 opened in a new VS Code window.
+              2. Do your work in that VS Code window and remember to commit and 
+                 push your changes.
+              3. When ready to ship, run 'workit pr' from the *main* repo. You can also run
+                 just 'workit pr' (or 'workit') from inside the worktree — but you will not
+                 get the option to cleanup the worktree, branch, and pull after merging when 
+                 run from inside the worktree.
+              4. The pr flow: pushes if needed → opens VS Code for you to write
+                 the title/summary → creates a Jira ticket → opens the GitHub PR.
+              5. After the PR merges, choose "Squash-and-merge" in the post-PR
+                 menu to close the Jira ticket, clean up the worktree, and pull.
+
+            CONFIGURATION
+              ~/.config/workit/config.json   — runtime settings (see defaults below)
+              ~/.config/workit/summary.md    — optional custom copilot prompt template
+                                               (use ${BRANCH} and ${REPO} as placeholders)
+
+            CONFIG KEYS
+              branch_prefix    Prepended to every new branch: "kjm" → "kjm/<branch>"
+              jira_projects    List of Jira project keys shown in the selector
+              jira_assignee    Auto-assign new Jira tickets to this user
+              status_report    Path to append merged-PR summaries to
+
+            DEPENDENCIES (make sure you have these installed and authenticated for the best experience)
+              gh     GitHub CLI  (https://cli.github.com)
+              acli   Atlassian CLI — optional, enables Jira integration
+              copilot  GitHub Copilot CLI — optional, enables --ai summary generation
+        """),
     )
     subparsers = parser.add_subparsers(dest="subcommand", metavar="subcommand")
 
     # create / new
     for name in ("create", "new"):
         p = subparsers.add_parser(name, help="Create a new worktree and branch")
-        p.add_argument("branch", nargs="?", default=None, help="Branch name")
+        p.add_argument(
+            "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
+        )
 
     # remove / delete / del / rm
     for name in ("remove", "delete", "del", "rm"):
-        p = subparsers.add_parser(name, help="Remove a worktree and delete its branch")
-        p.add_argument("branch", nargs="?", default=None, help="Branch name")
+        p = subparsers.add_parser(
+            name, help="Remove the worktree and delete its branch"
+        )
+        p.add_argument(
+            "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
+        )
 
     # pr
     pr_parser = subparsers.add_parser(
-        "pr", help="Create a GitHub PR for the worktree branch"
+        "pr",
+        help="Push, open a PR, optionally create a Jira ticket, then merge",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent("""\
+            Push the branch if needed, open VS Code to write the PR title/summary,
+            create a Jira ticket (if acli is available), open the GitHub PR, and
+            optionally squash-merge + clean up.
+
+            Run from the main repo checkout or from inside the worktree itself.
+        """),
     )
-    pr_parser.add_argument("branch", nargs="?", default=None, help="Branch name")
+    pr_parser.add_argument(
+        "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
+    )
     pr_parser.add_argument(
         "--key",
         metavar="JIRA_KEY",
@@ -805,6 +929,17 @@ def main() -> int:
         "--yes",
         action="store_true",
         help="Skip confirmation prompts, accepting defaults",
+    )
+    pr_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Use copilot CLI to generate the initial PR summary instead of the template",
+    )
+    pr_parser.add_argument(
+        "-m",
+        "--merge",
+        action="store_true",
+        help="Squash-and-merge immediately after creating the PR (requires --yes)",
     )
 
     # code / edit
@@ -826,7 +961,14 @@ def main() -> int:
         args = parser.parse_args(
             ["pr"] + raw if (not raw or raw[0].lower() != "pr") else raw
         )
-        return cmd_pr(args.branch, in_worktree=True, jira_key=args.key, yes=args.yes)
+        return cmd_pr(
+            args.branch,
+            in_worktree=True,
+            jira_key=args.key,
+            yes=args.yes,
+            ai=args.ai,
+            merge=args.merge,
+        )
 
     args = parser.parse_args()
 
@@ -855,7 +997,9 @@ def main() -> int:
     if sub == "list":
         return cmd_list()
     if sub == "pr":
-        return cmd_pr(branch, jira_key=args.key, yes=args.yes)
+        return cmd_pr(
+            branch, jira_key=args.key, yes=args.yes, ai=args.ai, merge=args.merge
+        )
     return SUBCOMMANDS[sub](branch)
 
 
