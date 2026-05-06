@@ -676,7 +676,7 @@ def cmd_pr(
     # Add PR URL as a comment on the Jira workitem
     if jira_result:
         pr_number = pr_url.rstrip("/").rsplit("/", 1)[-1]
-        repo_name = get_repo_name()
+        repo_slug = get_repo_slug()
         pr_comment = json.dumps(
             {
                 "version": 1,
@@ -688,7 +688,7 @@ def cmd_pr(
                             {"type": "text", "text": "PR: "},
                             {
                                 "type": "text",
-                                "text": f"{repo_name} #{pr_number}",
+                                "text": f"{repo_slug} #{pr_number}",
                                 "marks": [{"type": "link", "attrs": {"href": pr_url}}],
                             },
                         ],
