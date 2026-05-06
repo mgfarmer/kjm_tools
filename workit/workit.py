@@ -4,10 +4,12 @@ Usage:
     worktree create [branch-name]
     worktree remove [branch-name]
     worktree pr [branch-name]
+    worktree summary [branch-name]
 
 Subcommand aliases:
     create: new
     remove: delete, del, rm
+    summary: sum, summarize
 """
 
 import argparse
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +34,7 @@ from InquirerPy.separator import Separator
 
 _CONFIG_DIR = Path.home() / ".config" / "workit"
 _CONFIG_FILE = _CONFIG_DIR / "config.json"
+_PROMPTS_DIR = _CONFIG_DIR / "prompts"
 
 _CONFIG_DEFAULTS: dict = {
     "jira_projects": ["AE", "STARLING", "MAP"],
@@ -56,55 +60,141 @@ def _load_config() -> dict:
 
 config = _load_config()
 
+# --- Verbose logging ---
 
-# --- Prompt helpers ---
+_verbose: bool = False
 
+
+def vlog(*args, **kwargs) -> None:
+    """Print only when --verbose is active."""
+    if _verbose:
+        print(*args, **kwargs)
+
+
+PR_FORMATTER = (
+    "\n\nWrite a clear PR title on the first line, followed by a blank line, "
+    "then break the changes into high-level unrelated functional blocks and write a level 2 titled single "
+    "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
+    "long and written for a management audience. Do not use filenames or code syntax in "
+    "the description, just describe the changes in plain language. "
+    "Be factual and concise. Do not include filler phrases."
+)
+
+COMMIT_FORMATTER = (
+    "\n\nWrite a clear one line commit summary on the first line, followed by a blank line, "
+    "then break the changes into functional blocks and write a level 2 titled single "
+    "paragraph for each functional change. Each paragraph should be 2 to 4 sentences "
+    "long and written for a technical audience. "
+    "Be factual and concise. Do not include filler phrases."
+)
 
 _DEFAULT_PROMPTS: dict[str, str] = {
-    "summary": (
+    "PR Branch Summary": (
         "You are a helpful assistant that writes concise GitHub pull request descriptions.\n"
-        "Given the branch name '${BRANCH}' in the repository '${REPO}', examine the git log "
-        "and diff and write a clear PR title on the first line, followed by a blank line, "
-        "then break the changes into functional blocks and write a level 2 titled single "
-        "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
-        "long and written for a management audience. Do not use filenames or code syntax in "
-        "the description, just describe the changes in plain language. "
-        "Be factual and concise. Do not include filler phrases."
-    ),
+        "Examine the git log and diff for the current branch in this repository."
+    )
+    + PR_FORMATTER,
+    "Last Commit Summary": (
+        "You are a helpful assistant that summarizes the last commit on a given branch.\n"
+        "Examine the git log and diff for the last commit on this branch in this repository."
+    )
+    + COMMIT_FORMATTER,
+    "Working Copy Summary": (
+        "You are a helpful assistant that summarizes the working copy changes.\n"
+        "Examine the unstaged changes in this working copy."
+    )
+    + COMMIT_FORMATTER,
+    "Stage Changes Summary": (
+        "You are a helpful assistant that summarizes the staged changes.\n"
+        "Examine the staged changes in this working copy."
+    )
+    + COMMIT_FORMATTER,
 }
+
+_PR_PROMPT_NAME = "PR Branch Summary"
+_COMMIT_PROMPT_NAME = "Last Commit Summary"
+_UNCOMMITTED_PROMPT_NAME = "Working Copy Summary"
+_STAGED_PROMPT_NAME = "Stage Changes Summary"
+
+
+def _get_available_prompts() -> dict[str, str]:
+    """Return all available prompts: built-in defaults merged with any files in _PROMPTS_DIR."""
+    prompts = dict(_DEFAULT_PROMPTS)
+    if _PROMPTS_DIR.is_dir():
+        for f in sorted(_PROMPTS_DIR.glob("*.md")):
+            name = f.stem.replace("_", " ").replace("-", " ")
+            prompts[name] = f.read_text().strip()
+    return prompts
 
 
 def _load_prompt(name: str) -> str:
-    """Load a prompt template from ~/.config/workit/{name}.md, falling back to a built-in default."""
-    prompt_file = _CONFIG_DIR / f"{name}.md"
-    if prompt_file.exists():
-        return prompt_file.read_text().strip()
-    if name in _DEFAULT_PROMPTS:
-        return _DEFAULT_PROMPTS[name]
-    print(f"Error: Prompt file '{prompt_file}' not found.")
-    print(f"Create it with your prompt template for '{name}'.")
-    raise FileNotFoundError(f"Missing prompt file: {prompt_file}")
+    """Load a prompt by name, checking built-ins and ~/.config/workit/prompts/."""
+    prompts = _get_available_prompts()
+    if name in prompts:
+        return prompts[name]
+    print(f"Error: No prompt named '{name}' found.")
+    print(f"Available prompts: {', '.join(prompts)}")
+    raise FileNotFoundError(f"Missing prompt: {name}")
 
 
-def generate_summary(branch: str, repo: str) -> str:
-    """Generate a PR summary using the copilot CLI."""
-    prompt = _load_prompt("summary")
+def generate_summary(branch: str, repo: str, prompt_name: str = _PR_PROMPT_NAME) -> str:
+    """Generate a summary using the copilot CLI with the specified prompt."""
+    copilot_path = shutil.which("copilot")
+    if not copilot_path:
+        raise RuntimeError("'copilot' CLI not found on PATH")
+    vlog(f"copilot binary: {copilot_path}")
+
+    prompt = _load_prompt(prompt_name)
     prompt = prompt.replace("${BRANCH}", branch).replace("${REPO}", repo)
-    print("Summary prompt:")
-    print()
-    print(prompt)
-    print()
+    vlog("Summary prompt:")
+    vlog()
+    vlog(prompt)
+    vlog()
+
     cmd = ["copilot"]
-    if config.get("model", "default") != "default":
-        cmd += ["--model", config["model"]]
+    model = config.get("model", "default")
+    if model != "default":
+        cmd += ["--model", model]
     cmd += ["-p", prompt]
-    print(f"Running: {' '.join(cmd[:-1])} '<prompt>'")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or result.stderr.strip():
-        print("Error: copilot CLI failed to generate summary.")
-        if result.stderr:
-            print(result.stderr)
-        raise RuntimeError("copilot CLI error")
+
+    vlog(f"Running command: {' '.join(cmd[:-1])} '<prompt>'")
+    vlog()
+
+    result_holder: list = []
+
+    def _run() -> None:
+        result_holder.append(subprocess.run(cmd, capture_output=True, text=True))
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]  # noqa: W605
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]} Thinking...", end="", flush=True)
+        idx += 1
+        time.sleep(0.1)
+    print("\r  ✓ Done.          ", flush=True)
+
+    thread.join()
+    result = result_holder[0]
+
+    vlog(f"Exit code: {result.returncode}")
+    if result.stdout:
+        vlog(f"stdout ({len(result.stdout)} chars):")
+        vlog(result.stdout)
+    else:
+        vlog("stdout: (empty)")
+    if result.stderr:
+        vlog(f"stderr ({len(result.stderr)} chars):")
+        vlog(result.stderr)
+    else:
+        vlog("stderr: (empty)")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"copilot CLI exited with code {result.returncode}")
+    if not result.stdout.strip():
+        raise RuntimeError("copilot CLI returned empty output")
     return result.stdout.strip()
 
 
@@ -803,6 +893,52 @@ def cmd_code(branch_name: str | None) -> int:
     return 0
 
 
+def cmd_summary(branch_name: str | None, preset_prompt: str | None = None) -> int:
+    """Run an AI summary prompt against a branch and print the output."""
+    if not branch_name:
+        # Default to current branch
+        branch_name = run_git("branch", "--show-current").stdout.strip()
+        if not branch_name:
+            print(
+                "Error: Could not determine current branch. Pass a branch name explicitly."
+            )
+            return 1
+        print(f"Using current branch: {branch_name}")
+
+    repo = get_repo_slug()
+    print(f"Repo:   {repo}")
+    print(f"Branch: {branch_name}")
+    print()
+
+    if preset_prompt:
+        prompt_name = preset_prompt
+        print(f"Using prompt: {prompt_name}")
+    else:
+        prompts = _get_available_prompts()
+        if len(prompts) == 1:
+            prompt_name = next(iter(prompts))
+            print(f"Using prompt: {prompt_name}")
+        else:
+            prompt_name = inquirer.select(
+                message="Select a prompt:",
+                choices=list(prompts.keys()),
+            ).execute()
+
+    print()
+    try:
+        output = generate_summary(branch_name, repo, prompt_name)
+    except (RuntimeError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        return 1
+
+    print()
+    print(f"--- {prompt_name} ---")
+    print()
+    print(output)
+    print()
+    return 0
+
+
 # --- Main ---
 
 SUBCOMMANDS = {
@@ -815,6 +951,9 @@ SUBCOMMANDS = {
     "pr": cmd_pr,
     "code": cmd_code,
     "edit": cmd_code,
+    "summary": cmd_summary,
+    "sum": cmd_summary,
+    "summarize": cmd_summary,
 }
 
 
@@ -831,6 +970,7 @@ def cmd_list() -> int:
 
 
 def main() -> int:
+    global _verbose
     # Verify we're in a git repository
     result = run_git("rev-parse", "--is-inside-work-tree")
     if result.returncode != 0:
@@ -863,9 +1003,11 @@ def main() -> int:
                  get the option to cleanup the worktree, branch, and pull after merging when 
                  run from inside the worktree.
               4. The pr flow: pushes if needed → opens VS Code for you to write
-                 the title/summary → creates a Jira ticket → opens the GitHub PR.
+                 the title/summary → creates a Jira ticket → opens the GitHub PR,
+                 and associates the PR and Jira ticket with each other.
               5. After the PR merges, choose "Squash-and-merge" in the post-PR
-                 menu to close the Jira ticket, clean up the worktree, and pull.
+                 menu to close the Jira ticket, clean up the worktree, and pull your changes
+                 into your main working copy.
 
             CONFIGURATION
               ~/.config/workit/config.json   — runtime settings (see defaults below)
@@ -879,10 +1021,18 @@ def main() -> int:
               status_report    Path to append merged-PR summaries to
 
             DEPENDENCIES (make sure you have these installed and authenticated for the best experience)
-              gh     GitHub CLI  (https://cli.github.com)
-              acli   Atlassian CLI — optional, enables Jira integration
+              gh     GitHub CLI  
+                     (https://cli.github.com)
+              acli   Atlassian CLI — optional, enables Jira integration 
+                     (https://developer.atlassian.com/cloud/acli/guides/install-linux/)
               copilot  GitHub Copilot CLI — optional, enables --ai summary generation
         """),
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose/debug output",
     )
     subparsers = parser.add_subparsers(dest="subcommand", metavar="subcommand")
 
@@ -950,6 +1100,52 @@ def main() -> int:
     # list
     subparsers.add_parser("list", help="List existing worktrees")
 
+    # summary / sum / summarize
+    for name in ("summary", "sum", "summarize"):
+        p = subparsers.add_parser(
+            name,
+            help="Run an AI prompt against a branch and print the output",
+        )
+        p.add_argument(
+            "branch",
+            nargs="?",
+            default=None,
+            help="Branch name (defaults to current branch)",
+        )
+        g = p.add_mutually_exclusive_group()
+        g.add_argument(
+            "-b",
+            "--branch-summary",
+            dest="preset_prompt",
+            action="store_const",
+            const=_PR_PROMPT_NAME,
+            help=f'Use the "{_PR_PROMPT_NAME}" prompt without prompting',
+        )
+        g.add_argument(
+            "-c",
+            "--commit",
+            dest="preset_prompt",
+            action="store_const",
+            const=_COMMIT_PROMPT_NAME,
+            help=f'Use the "{_COMMIT_PROMPT_NAME}" prompt without prompting',
+        )
+        g.add_argument(
+            "-u",
+            "--uncommitted",
+            dest="preset_prompt",
+            action="store_const",
+            const=_UNCOMMITTED_PROMPT_NAME,
+            help=f'Use the "{_UNCOMMITTED_PROMPT_NAME}" prompt without prompting',
+        )
+        g.add_argument(
+            "-s",
+            "--staged",
+            dest="preset_prompt",
+            action="store_const",
+            const=_STAGED_PROMPT_NAME,
+            help=f'Use the "{_STAGED_PROMPT_NAME}" prompt without prompting',
+        )
+
     if in_worktree:
         # Only pr is valid from inside a worktree; default to it if no subcommand given
         raw = sys.argv[1:]
@@ -961,6 +1157,7 @@ def main() -> int:
         args = parser.parse_args(
             ["pr"] + raw if (not raw or raw[0].lower() != "pr") else raw
         )
+        _verbose = args.verbose
         return cmd_pr(
             args.branch,
             in_worktree=True,
@@ -971,6 +1168,8 @@ def main() -> int:
         )
 
     args = parser.parse_args()
+
+    _verbose = args.verbose
 
     if args.subcommand is None:
         # Interactive menu
@@ -996,6 +1195,8 @@ def main() -> int:
 
     if sub == "list":
         return cmd_list()
+    if sub in ("summary", "sum", "summarize"):
+        return cmd_summary(branch, preset_prompt=getattr(args, "preset_prompt", None))
     if sub == "pr":
         return cmd_pr(
             branch, jira_key=args.key, yes=args.yes, ai=args.ai, merge=args.merge
