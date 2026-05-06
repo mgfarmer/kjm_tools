@@ -583,7 +583,7 @@ def cmd_pr(
     in_worktree: bool = False,
     jira_key: str | None = None,
     yes: bool = False,
-    ai: bool = False,
+    ai: bool = True,
     merge: bool = False,
 ) -> int:
     """Create a pull request for the specified worktree branch."""
@@ -1009,15 +1009,34 @@ def main() -> int:
                  menu to close the Jira ticket, clean up the worktree, and pull your changes
                  into your main working copy.
 
+            AI SUMMARIES
+              The 'summary' subcommand (aliases: sum, summarize) runs a copilot-powered
+              prompt against the current branch and prints the result. Four built-in prompts
+              are available and can be selected via flags or an interactive menu:
+
+                -b / --branch-summary   Summarize all commits on the branch (PR description)
+                -c / --commit           Summarize the last commit on the branch
+                -u / --uncommitted      Summarize uncommitted (unstaged) working-copy changes
+                -s / --staged           Summarize staged (index) changes
+
+              Custom prompts can be added by placing *.md files in:
+                ~/.config/workit/prompts/
+              The filename (underscores/dashes replaced with spaces) becomes the prompt name.
+              Custom prompts appear alongside the built-ins in the interactive menu.
+
+              The 'pr' subcommand auto-generates the initial PR description using the
+              "PR Branch Summary" prompt before opening VS Code for editing. Pass --no-ai
+              to skip AI generation and use a blank template instead.
+
             CONFIGURATION
               ~/.config/workit/config.json   — runtime settings (see defaults below)
-              ~/.config/workit/summary.md    — optional custom copilot prompt template
-                                               (use ${BRANCH} and ${REPO} as placeholders)
+              ~/.config/workit/prompts/      — directory for custom prompt *.md files
 
             CONFIG KEYS
               branch_prefix    Prepended to every new branch: "kjm" → "kjm/<branch>"
               jira_projects    List of Jira project keys shown in the selector
               jira_assignee    Auto-assign new Jira tickets to this user
+              model            Copilot model to use for AI summaries
               status_report    Path to append merged-PR summaries to
 
             DEPENDENCIES (make sure you have these installed and authenticated for the best experience)
@@ -1025,7 +1044,7 @@ def main() -> int:
                      (https://cli.github.com)
               acli   Atlassian CLI — optional, enables Jira integration 
                      (https://developer.atlassian.com/cloud/acli/guides/install-linux/)
-              copilot  GitHub Copilot CLI — optional, enables --ai summary generation
+              copilot  GitHub Copilot CLI — optional, enables AI summary generation
         """),
     )
     parser.add_argument(
@@ -1081,9 +1100,11 @@ def main() -> int:
         help="Skip confirmation prompts, accepting defaults",
     )
     pr_parser.add_argument(
-        "--ai",
-        action="store_true",
-        help="Use copilot CLI to generate the initial PR summary instead of the template",
+        "--no-ai",
+        dest="ai",
+        action="store_false",
+        default=True,
+        help="Skip AI summary generation and use the blank template instead",
     )
     pr_parser.add_argument(
         "-m",
@@ -1105,6 +1126,22 @@ def main() -> int:
         p = subparsers.add_parser(
             name,
             help="Run an AI prompt against a branch and print the output",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            description=textwrap.dedent(f"""\
+                Run a copilot-powered prompt against a branch and print the result.
+
+                Four built-in prompts are available via flags. Omit all flags to
+                choose from an interactive menu that also includes any custom prompts
+                found in ~/.config/workit/prompts/.
+
+                  -b / --branch-summary   "{_PR_PROMPT_NAME}"
+                  -c / --commit           "{_COMMIT_PROMPT_NAME}"
+                  -u / --uncommitted      "{_UNCOMMITTED_PROMPT_NAME}"
+                  -s / --staged           "{_STAGED_PROMPT_NAME}"
+
+                Custom prompts: place *.md files in ~/.config/workit/prompts/.
+                The filename (underscores/dashes → spaces) becomes the prompt name.
+            """),
         )
         p.add_argument(
             "branch",
