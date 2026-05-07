@@ -989,8 +989,8 @@ def main() -> int:
             workit — git worktree manager with Jira and GitHub PR integration
                                     
             This tool automates the creation and cleanup of git worktrees for 
-            feature branches, and streamlines the PR creation process with optional 
-            Jira ticket creation and closure using optional AI-generated summaries.
+            feature branches, and streamlines the PR creation process with  
+            Jira ticket creation and closure using AI-generated summaries.
 
             WORKFLOW
               1. Run 'workit create <branch>' from your main repo checkout.
@@ -1011,16 +1011,18 @@ def main() -> int:
 
             AI SUMMARIES
               The 'summary' subcommand (aliases: sum, summarize) runs a copilot-powered
-              prompt against the current branch and prints the result. Four built-in prompts
+              prompt and prints the result. Four built-in prompts
               are available and can be selected via flags or an interactive menu:
 
-                -b / --branch-summary   Summarize all commits on the branch (PR description)
+                -b / --branch           Summarize all commits on the branch (PR description)
                 -c / --commit           Summarize the last commit on the branch
                 -u / --uncommitted      Summarize uncommitted (unstaged) working-copy changes
                 -s / --staged           Summarize staged (index) changes
+                                        (use to generate commits messages before committing)
 
               Custom prompts can be added by placing *.md files in:
                 ~/.config/workit/prompts/
+                                    
               The filename (underscores/dashes replaced with spaces) becomes the prompt name.
               Custom prompts appear alongside the built-ins in the interactive menu.
 
@@ -1036,15 +1038,14 @@ def main() -> int:
               branch_prefix    Prepended to every new branch: "kjm" → "kjm/<branch>"
               jira_projects    List of Jira project keys shown in the selector
               jira_assignee    Auto-assign new Jira tickets to this user
-              model            Copilot model to use for AI summaries
               status_report    Path to append merged-PR summaries to
 
-            DEPENDENCIES (make sure you have these installed and authenticated for the best experience)
-              gh     GitHub CLI  
+            DEPENDENCIES (make sure you have these installed and authenticated)
+              gh     GitHub CLI, includes copilot CLI for AI summaries and pr creation  
                      (https://cli.github.com)
-              acli   Atlassian CLI — optional, enables Jira integration 
+              acli   Atlassian CLI — optional, enables Jira integration, uses Atlassian 
+                     API Token authentication
                      (https://developer.atlassian.com/cloud/acli/guides/install-linux/)
-              copilot  GitHub Copilot CLI — optional, enables AI summary generation
         """),
     )
     parser.add_argument(
@@ -1134,7 +1135,7 @@ def main() -> int:
                 choose from an interactive menu that also includes any custom prompts
                 found in ~/.config/workit/prompts/.
 
-                  -b / --branch-summary   "{_PR_PROMPT_NAME}"
+                  -b / --branch           "{_PR_PROMPT_NAME}"
                   -c / --commit           "{_COMMIT_PROMPT_NAME}"
                   -u / --uncommitted      "{_UNCOMMITTED_PROMPT_NAME}"
                   -s / --staged           "{_STAGED_PROMPT_NAME}"
@@ -1152,7 +1153,7 @@ def main() -> int:
         g = p.add_mutually_exclusive_group()
         g.add_argument(
             "-b",
-            "--branch-summary",
+            "--branch",
             dest="preset_prompt",
             action="store_const",
             const=_PR_PROMPT_NAME,
