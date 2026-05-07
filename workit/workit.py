@@ -36,10 +36,12 @@ _CONFIG_DIR = Path.home() / ".config" / "workit"
 _CONFIG_FILE = _CONFIG_DIR / "config.json"
 _PROMPTS_DIR = _CONFIG_DIR / "prompts"
 
+# "claude-4.6-sonnet"
+
 _CONFIG_DEFAULTS: dict = {
     "jira_projects": ["AE", "STARLING", "MAP"],
     "branch_prefix": "",
-    "model": "claude-4.6-sonnet",
+    "model": "",
     "jira_assignee": "",
     "status_report": "~/workit_status_report.md",
 }
@@ -392,6 +394,9 @@ def prompt_branch_name() -> str | None:
 
 def cmd_create(branch_name: str | None) -> int:
     """Create a new worktree and branch."""
+    print()
+    print("workit — Create a new worktree")
+    print()
     if not branch_name:
         branch_name = prompt_branch_name()
         if not branch_name:
@@ -431,6 +436,9 @@ def cmd_create(branch_name: str | None) -> int:
 
 def cmd_remove(branch_name: str | None, force: bool = False) -> int:
     """Remove a worktree and delete its branch."""
+    print()
+    print("workit — Remove a worktree")
+    print()
     if not branch_name:
         branch_name = prompt_select_worktree("remove")
         if not branch_name:
@@ -587,6 +595,9 @@ def cmd_pr(
     merge: bool = False,
 ) -> int:
     """Create a pull request for the specified worktree branch."""
+    print()
+    print("workit — Create a pull request")
+    print()
     if merge and not yes:
         print("Error: --merge requires --yes.")
         return 1
@@ -877,6 +888,9 @@ def cmd_pr(
 
 def cmd_code(branch_name: str | None) -> int:
     """Open an existing worktree in a new VS Code window."""
+    print()
+    print("workit — Open a worktree in VS Code")
+    print()
     if not branch_name:
         branch_name = prompt_select_worktree("open in VS Code")
         if not branch_name:
@@ -895,6 +909,9 @@ def cmd_code(branch_name: str | None) -> int:
 
 def cmd_summary(branch_name: str | None, preset_prompt: str | None = None) -> int:
     """Run an AI summary prompt against a branch and print the output."""
+    print()
+    print("workit — AI summary")
+    print()
     if not branch_name:
         # Default to current branch
         branch_name = run_git("branch", "--show-current").stdout.strip()
@@ -1213,6 +1230,8 @@ def main() -> int:
         # Interactive menu
         worktree_count = len(get_existing_worktrees())
         if not worktree_count:
+            print()
+            print("No existing worktrees found. Starting create flow.")
             return cmd_create(None)
         choices: list = [Choice(value="create", name="Create a new worktree")]
         choices.append(Choice(value="remove", name="Remove a worktree"))
