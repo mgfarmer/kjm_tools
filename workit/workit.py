@@ -27,9 +27,10 @@ from pathlib import Path
 import re as _re
 
 
-from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
-from InquirerPy.separator import Separator
+from InquirerPy.prompts.confirm import ConfirmPrompt
+from InquirerPy.prompts.input import InputPrompt
+from InquirerPy.prompts.list import ListPrompt
 
 
 # --- Configuration ---
@@ -276,7 +277,7 @@ def create_jira_workitem(
     title = title.lstrip("#").strip()
     if not shutil.which("acli"):
         print("Warning: acli is not installed or not on PATH.")
-        proceed = inquirer.confirm(
+        proceed = ConfirmPrompt(
             message="Continue creating PR without a Jira ticket?",
             default=True,
         ).execute()
@@ -292,7 +293,7 @@ def create_jira_workitem(
             project = projects[0]
             print(f"Jira project: {project}")
         else:
-            project = inquirer.select(
+            project = ListPrompt(
                 message="Select Jira project:",
                 choices=projects,
                 default=projects[0],
@@ -321,7 +322,7 @@ def create_jira_workitem(
 
     if result.returncode != 0:
         print(f"Error: acli failed.\n{output}")
-        proceed = inquirer.confirm(
+        proceed = ConfirmPrompt(
             message="Continue creating PR without a Jira ticket?",
             default=True,
         ).execute()
@@ -330,7 +331,7 @@ def create_jira_workitem(
     match = re.search(r"Work item (\S+) created: (\S+)", output)
     if not match:
         print(f"Warning: Could not parse acli output:\n{output}")
-        proceed = inquirer.confirm(
+        proceed = ConfirmPrompt(
             message="Continue creating PR without a Jira ticket?",
             default=True,
         ).execute()
@@ -442,7 +443,7 @@ def prompt_select_worktree(action_description: str) -> str | None:
         print(f"Auto-selected worktree: {worktrees[0]}")
         return worktrees[0]
 
-    branch = inquirer.select(
+    branch = ListPrompt(
         message=f"Select a worktree to {action_description}:",
         choices=worktrees,
     ).execute()
@@ -451,7 +452,7 @@ def prompt_select_worktree(action_description: str) -> str | None:
 
 def prompt_branch_name() -> str | None:
     """Prompt user for a new branch name."""
-    branch = inquirer.text(
+    branch = InputPrompt(
         message="Enter the new branch name:",
         validate=lambda x: len(x.strip()) > 0,
         invalid_message="Branch name cannot be empty.",
@@ -492,7 +493,7 @@ def cmd_create(branch_name: str | None) -> int:
     else:
         result = run_git("worktree", "add", "-b", branch_name, str(target_path))
     if result.returncode != 0:
-        print(f"Error: Failed to create worktree.")
+        print("Error: Failed to create worktree.")
         if result.stderr:
             print(result.stderr)
         return 1
@@ -608,7 +609,7 @@ def cmd_remove(branch_name: str | None, force: bool = False) -> int:
     # Step 1: Remove the worktree
     print(f"Step 1: Remove worktree at '{target_path}'")
     if not force:
-        confirm = inquirer.confirm(
+        confirm = ConfirmPrompt(
             message="Are you sure you want to remove this worktree?",
             default=False,
         ).execute()
@@ -631,7 +632,7 @@ def cmd_remove(branch_name: str | None, force: bool = False) -> int:
     print("  This will permanently delete the branch and all its commits")
     print("     that have not been pushed or merged elsewhere.")
     if not force:
-        confirm = inquirer.confirm(
+        confirm = ConfirmPrompt(
             message="Are you sure you want to delete this branch?",
             default=False,
         ).execute()
@@ -771,7 +772,7 @@ def cmd_pr(
             return 1
 
         if content == placeholder.strip():
-            action = inquirer.select(
+            action = ListPrompt(
                 message="The template content was not changed. What would you like to do?",
                 choices=[
                     Choice("edit", "Edit it again"),
@@ -785,7 +786,7 @@ def cmd_pr(
             # loop back and re-open the editor
             continue
 
-        action = inquirer.select(
+        action = ListPrompt(
             message="Summary ready. What would you like to do?",
             choices=[
                 Choice("continue", "Continue with this summary"),
@@ -915,7 +916,7 @@ def cmd_pr(
             if yes
             else "Squash-and-merge, then close and delete worktree and branch (with confirmations)"
         )
-        action = inquirer.select(
+        action = ListPrompt(
             message="What would you like to do?",
             choices=[
                 Choice(
@@ -956,13 +957,13 @@ def cmd_pr(
                 cmd_remove(branch_name, force=True)
                 run_git("pull", capture=False)
             else:
-                cleanup = inquirer.confirm(
+                cleanup = ConfirmPrompt(
                     message=f"Delete worktree and branch '{branch_name}'?",
                     default=True,
                 ).execute()
                 if cleanup:
                     cmd_remove(branch_name)
-                do_pull = inquirer.confirm(
+                do_pull = ConfirmPrompt(
                     message="Run git pull?",
                     default=True,
                 ).execute()
@@ -1022,7 +1023,7 @@ def cmd_summary(branch_name: str | None, preset_prompt: str | None = None) -> in
             prompt_name = next(iter(prompts))
             print(f"Using prompt: {prompt_name}")
         else:
-            prompt_name = inquirer.select(
+            prompt_name = ListPrompt(
                 message="Select a prompt:",
                 choices=list(prompts.keys()),
             ).execute()
@@ -1108,11 +1109,12 @@ def cmd_post_pr(
                 )
                 for pr in prs
             ]
-            pr_number = inquirer.select(
+            pr_number = ListPrompt(
                 message="Select a merged PR to summarize:",
                 choices=choices,
             ).execute()
 
+    assert isinstance(pr_number, str), "pr_number must be set by this point"
     print(f"Summarizing PR #{pr_number}...")
     print()
 
@@ -1149,7 +1151,7 @@ def cmd_post_pr(
             print("Aborted: no content provided.")
             return 1
 
-        action = inquirer.select(
+        action = ListPrompt(
             message="Summary ready. What would you like to do?",
             choices=[
                 Choice("continue", "Continue with this summary"),
@@ -1658,7 +1660,7 @@ def main() -> int:
         choices.append(
             Choice(value="list", name=f"List existing worktrees ({worktree_count})")
         )
-        action = inquirer.select(
+        action = ListPrompt(
             message="What would you like to do?",
             choices=choices,
         ).execute()
