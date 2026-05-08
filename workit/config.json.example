@@ -1,0 +1,8 @@
+{
+  "jira_projects": ["AE"],
+  "epic_projects": ["PROD"],
+  "branch_prefix": "kjm",
+  "model": "default",
+  "status_report": "~/workit_status_report.md",
+  "jira_assignee": "kmills@mips.com"
+}
