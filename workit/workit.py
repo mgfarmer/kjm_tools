@@ -1,15 +1,26 @@
 """Unified git worktree management tool.
 
 Usage:
-    worktree create [branch-name]
-    worktree remove [branch-name]
-    worktree pr [branch-name]
-    worktree summary [branch-name]
+    workit create [branch-name]
+    workit remove [branch-name]
+    workit pr [branch-name]
+    workit summary [branch-name]
+    workit open [branch-name]
 
 Subcommand aliases:
     create: new
     remove: delete, del, rm
     summary: sum, summarize
+
+Jira integration (requires acli):
+    When creating a branch, workit optionally creates a Jira ticket and links it
+    to an epic. Epics are presented via a fuzzy picker populated from recently
+    used epics (MRU cache) and all open epics fetched live from Jira.
+    Configure which projects are queried via jira_projects / epic_projects.
+
+'workit pr' can be run from either the main repo checkout or from inside a
+worktree. When run from a worktree, it automatically detects the main repo,
+cd's there, and runs the full pr flow with complete cleanup support.
 """
 
 import argparse
@@ -29,8 +40,10 @@ import re as _re
 
 from InquirerPy.base.control import Choice
 from InquirerPy.prompts.confirm import ConfirmPrompt
+from InquirerPy.prompts.fuzzy import FuzzyPrompt
 from InquirerPy.prompts.input import InputPrompt
 from InquirerPy.prompts.list import ListPrompt
+from InquirerPy.separator import Separator
 
 
 # --- Configuration ---
@@ -43,11 +56,15 @@ _PROMPTS_DIR = _CONFIG_DIR / "prompts"
 
 _CONFIG_DEFAULTS: dict = {
     "jira_projects": ["AE", "STARLING", "MAP"],
+    "epic_projects": [],
     "branch_prefix": "",
     "model": "",
     "jira_assignee": "",
     "status_report": "~/workit_status_report.md",
+    "jira_base_url": "https://wavecomp.atlassian.net",
 }
+
+_EPIC_CACHE_FILE = _CONFIG_DIR / "epic_cache.json"
 
 
 def _load_config() -> dict:
@@ -77,7 +94,7 @@ def vlog(*args, **kwargs) -> None:
 
 
 PR_FORMATTER = (
-    "\n\nExamine all changes on the current branch relative to main (or the default base branch). "
+    "\n\nExamine all changes on the branch '${BRANCH}' relative to main (or the default base branch). "
     "Write a clear Level 1 markdown (#) PR title on the first line, followed by a blank line, "
     "then break the changes into high-level unrelated functional blocks and write a level 2 titled single "
     "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
@@ -108,7 +125,7 @@ POST_PR_FORMATTER = (
 _DEFAULT_PROMPTS: dict[str, str] = {
     "PR Branch Summary": (
         "You are a helpful assistant that writes concise GitHub pull request descriptions.\n"
-        "Examine the git log and diff for the current branch in this repository."
+        "Examine the git log and diff for the branch '${BRANCH}' in this repository."
     )
     + PR_FORMATTER,
     "Last Commit Summary": (
@@ -205,6 +222,7 @@ def generate_summary(
     repo: str,
     prompt_name: str = _PR_PROMPT_NAME,
     pr_number: str | None = None,
+    cwd: str | Path | None = None,
 ) -> str:
     """Generate a summary using the copilot CLI with the specified prompt."""
     copilot_path = shutil.which("copilot")
@@ -230,12 +248,16 @@ def generate_summary(
     cmd += ["-p", prompt]
 
     vlog(f"Running command: {' '.join(cmd[:-1])} '<prompt>'")
+    if cwd:
+        vlog(f"cwd: {cwd}")
     vlog()
 
     result_holder: list = []
 
     def _run() -> None:
-        result_holder.append(subprocess.run(cmd, capture_output=True, text=True))
+        result_holder.append(
+            subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+        )
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -271,14 +293,17 @@ def generate_summary(
 
 
 def create_jira_workitem(
-    title: str, summary: str, jira_key: str | None = None
+    title: str,
+    summary: str,
+    jira_key: str | None = None,
+    epic_key: str | None = None,
 ) -> tuple[str, str] | None:
     """Create a Jira workitem via ACLI. Returns (issue_id, issue_url) or None."""
     title = title.lstrip("#").strip()
     if not shutil.which("acli"):
         print("Warning: acli is not installed or not on PATH.")
         proceed = ConfirmPrompt(
-            message="Continue creating PR without a Jira ticket?",
+            message="Continue without a Jira ticket?",
             default=True,
         ).execute()
         return (
@@ -315,6 +340,8 @@ def create_jira_workitem(
     ]
     if config.get("jira_assignee"):
         cmd += ["--assignee", config["jira_assignee"]]
+    if epic_key:
+        cmd += ["--parent", epic_key]
 
     print("Creating Jira workitem...")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -323,7 +350,7 @@ def create_jira_workitem(
     if result.returncode != 0:
         print(f"Error: acli failed.\n{output}")
         proceed = ConfirmPrompt(
-            message="Continue creating PR without a Jira ticket?",
+            message="Continue without a Jira ticket?",
             default=True,
         ).execute()
         return None if proceed else (_ for _ in ()).throw(RuntimeError("acli error"))
@@ -332,7 +359,7 @@ def create_jira_workitem(
     if not match:
         print(f"Warning: Could not parse acli output:\n{output}")
         proceed = ConfirmPrompt(
-            message="Continue creating PR without a Jira ticket?",
+            message="Continue without a Jira ticket?",
             default=True,
         ).execute()
         return (
@@ -365,6 +392,19 @@ def append_status_report(title: str, summary: str) -> None:
 
 
 # --- Utilities ---
+
+
+def open_vscode_with_countdown(path: str | Path, seconds: int = 3) -> None:
+    """Print a countdown then open VS Code at the given path in a new window."""
+    for remaining in range(seconds, 0, -1):
+        print(
+            f"Opening VS Code in {remaining} second{'s' if remaining != 1 else ''}...",
+            end="\r",
+            flush=True,
+        )
+        time.sleep(1)
+    print(" " * 40, end="\r")  # clear the line
+    subprocess.run(["code", str(path), "--new-window"])
 
 
 def run_git(
@@ -460,10 +500,236 @@ def prompt_branch_name() -> str | None:
     return branch.strip() if branch else None
 
 
-# --- Subcommands ---
+def extract_ticket_id(branch_name: str) -> str | None:
+    """Extract a Jira ticket ID prefix from the last segment of a branch name.
+
+    E.g. 'kjm/AE-123-my-feature' → 'AE-123', 'main' → None.
+    """
+    last_segment = branch_name.rsplit("/", 1)[-1]
+    m = re.match(r"^([A-Z]+-\d+)-", last_segment)
+    return m.group(1) if m else None
 
 
-def cmd_create(branch_name: str | None) -> int:
+# --- Epic cache ---
+
+
+def load_epic_cache() -> list[dict]:
+    """Load the epic cache from disk. Returns a list of {key, summary} dicts."""
+    try:
+        if _EPIC_CACHE_FILE.exists():
+            with _EPIC_CACHE_FILE.open() as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data[:5]
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def save_epic_cache(epic_key: str, epic_summary: str) -> None:
+    """Prepend an epic to the cache, deduplicate by key, truncate to 5."""
+    cache = load_epic_cache()
+    cache = [e for e in cache if e.get("key") != epic_key]
+    cache.insert(0, {"key": epic_key, "summary": epic_summary})
+    cache = cache[:5]
+    try:
+        _EPIC_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _EPIC_CACHE_FILE.open("w") as f:
+            json.dump(cache, f, indent=2)
+    except OSError as e:
+        print(f"Warning: Could not write epic cache: {e}")
+
+
+def fetch_epic_summary(epic_key: str) -> str:
+    """Fetch the summary/title of a Jira epic via acli. Falls back to the key itself."""
+    try:
+        result = subprocess.run(
+            [
+                "acli",
+                "jira",
+                "workitem",
+                "view",
+                epic_key,
+                "--json",
+                "--fields",
+                "summary",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if isinstance(data, list):
+                data = data[0]
+            fields = data.get("fields", {})
+            return fields.get("summary", epic_key)
+    except (json.JSONDecodeError, OSError, KeyError, IndexError):
+        pass
+    return epic_key
+
+
+def _run_epic_search(jql: str) -> list[dict] | None:
+    """Run acli epic search for a given JQL. Returns parsed list or None on failure."""
+    try:
+        result = subprocess.run(
+            [
+                "acli",
+                "jira",
+                "workitem",
+                "search",
+                "--jql",
+                jql,
+                "--json",
+                "--fields",
+                "key,summary",
+                "--paginate",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        data = json.loads(result.stdout)
+        if not isinstance(data, list):
+            return None
+        epics = []
+        for item in data:
+            key = item.get("key", "")
+            summary = item.get("fields", {}).get("summary", key)
+            if key:
+                epics.append({"key": key, "summary": summary})
+        return epics
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def fetch_open_epics() -> list[dict]:
+    """Fetch all non-DONE epics from Jira via acli. Returns [{key, summary}, ...]."""
+    if not shutil.which("acli"):
+        return []
+    projects = list(
+        dict.fromkeys(config.get("jira_projects", []) + config.get("epic_projects", []))
+    )
+    if projects:
+        quoted = ", ".join(f'"{p}"' for p in projects)
+        jql = f"issuetype = Epic AND status != Done AND project in ({quoted}) ORDER BY updated DESC"
+        epics = _run_epic_search(jql)
+        if epics is not None:
+            return epics
+        # Combined query failed (likely an invalid project key) — try each individually
+        vlog("Warning: combined project JQL failed, retrying per-project...")
+        seen_keys: set[str] = set()
+        epics = []
+        for project in projects:
+            jql = f'issuetype = Epic AND status != Done AND project = "{project}" ORDER BY updated DESC'
+            result = _run_epic_search(jql)
+            if result:
+                for e in result:
+                    if e["key"] not in seen_keys:
+                        seen_keys.add(e["key"])
+                        epics.append(e)
+        return epics
+    else:
+        return (
+            _run_epic_search(
+                "issuetype = Epic AND status != Done ORDER BY updated DESC"
+            )
+            or []
+        )
+
+
+def prompt_epic(epic_key_from_cli: str | None) -> tuple[str, str] | None:
+    """Prompt the user to select or enter an epic to link to the new ticket.
+
+    Returns (epic_key, epic_summary) or None if skipped.
+    """
+    if epic_key_from_cli:
+        epic_key = epic_key_from_cli.strip().upper()
+        print(f"Fetching epic details for {epic_key}...")
+        summary = fetch_epic_summary(epic_key)
+        save_epic_cache(epic_key, summary)
+        print(f"Epic: {epic_key}: {summary}")
+        return epic_key, summary
+
+    cache = load_epic_cache()
+
+    epic_projects = list(
+        dict.fromkeys(config.get("jira_projects", []) + config.get("epic_projects", []))
+    )
+    pick_label = (
+        f"Pick from open epics in {', '.join(epic_projects)}"
+        if epic_projects
+        else "Pick from open epics"
+    )
+
+    action = ListPrompt(
+        message="Link to an epic?",
+        choices=[
+            Choice(value="pick", name=pick_label),
+            Choice(value="__other__", name="Enter an epic key manually"),
+            Choice(value="__skip__", name="Skip (do not link to an epic)"),
+        ],
+        default="pick",
+    ).execute()
+
+    if action == "__skip__":
+        return None
+
+    if action == "__other__":
+        epic_key = InputPrompt(
+            message="Enter epic key (e.g. AE-42):",
+            validate=lambda x: len(x.strip()) > 0,
+            invalid_message="Epic key cannot be empty.",
+        ).execute()
+        epic_key = epic_key.strip().upper()
+        print(f"Fetching epic details for {epic_key}...")
+        summary = fetch_epic_summary(epic_key)
+        save_epic_cache(epic_key, summary)
+        print(f"Epic: {epic_key}: {summary}")
+        return epic_key, summary
+
+    # action == "pick" — fetch epics and show fuzzy picker
+    print("Fetching open epics from Jira...", end="", flush=True)
+    open_epics = fetch_open_epics()
+    print(" done." if open_epics else " (none found)")
+
+    cache_keys = {e["key"] for e in cache}
+
+    choices: list = []
+    for entry in cache:
+        choices.append(
+            Choice(
+                value=entry["key"],
+                name=f"[recent] {entry['key']}: {entry['summary']}",
+            )
+        )
+    for entry in open_epics:
+        if entry["key"] not in cache_keys:
+            choices.append(
+                Choice(
+                    value=entry["key"],
+                    name=f"{entry['key']}: {entry['summary']}",
+                )
+            )
+
+    selection = FuzzyPrompt(
+        message="Select an epic:",
+        choices=choices,
+        default="",
+        max_height="40%",
+        instruction="(↑↓ navigate, type to fuzzy-search, Enter to select)",
+    ).execute()
+
+    # Selected an epic — look up summary from cache or fetched list, then promote to top
+    epic_key = selection
+    all_known = cache + open_epics
+    summary = next((e["summary"] for e in all_known if e["key"] == epic_key), epic_key)
+    save_epic_cache(epic_key, summary)
+    print(f"Epic: {epic_key}: {summary}")
+    return epic_key, summary
+
+
+def cmd_create(branch_name: str | None, epic: str | None = None) -> int:
     """Create a new worktree and branch."""
     print()
     print("workit — Create a new worktree")
@@ -473,6 +739,24 @@ def cmd_create(branch_name: str | None) -> int:
         if not branch_name:
             print("Aborted.")
             return 1
+
+    # Optionally create a Jira ticket and embed its ID in the branch name
+    if shutil.which("acli"):
+        create_ticket = ConfirmPrompt(
+            message="Create a Jira ticket for this branch?",
+            default=True,
+        ).execute()
+        if create_ticket:
+            epic_result = prompt_epic(epic)
+            epic_key = epic_result[0] if epic_result else None
+            try:
+                jira_result = create_jira_workitem(branch_name, "", epic_key=epic_key)
+            except RuntimeError:
+                return 1
+            if jira_result:
+                issue_id, issue_url = jira_result
+                branch_name = f"{issue_id}-{branch_name}"
+                print(f"Branch name updated to: {branch_name}")
 
     branch_prefix = config.get("branch_prefix", "")
     if branch_prefix:
@@ -499,7 +783,7 @@ def cmd_create(branch_name: str | None) -> int:
         return 1
 
     # Open VS Code in the new directory
-    subprocess.run(["code", str(target_path), "--new-window"])
+    open_vscode_with_countdown(target_path)
 
     print("Done! Worktree is ready.")
     return 0
@@ -660,6 +944,7 @@ def cmd_remove(branch_name: str | None, force: bool = False) -> int:
 def cmd_pr(
     branch_name: str | None,
     in_worktree: bool = False,
+    from_worktree: bool = False,
     jira_key: str | None = None,
     yes: bool = False,
     ai: bool = True,
@@ -698,6 +983,18 @@ def cmd_pr(
             branch_name = prompt_select_worktree("create a PR for")
             if not branch_name:
                 return 1
+
+    # Guard: refuse to create a PR from the default branch
+    default_branch = (
+        run_git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+        .stdout.strip()
+        .removeprefix("origin/")
+        or "main"
+    )
+    if branch_name == default_branch:
+        print(f"Error: Cannot create a PR from the default branch '{default_branch}'.")
+        print("Switch to or specify a feature branch.")
+        return 1
 
     target_path = Path.cwd() if in_worktree else get_target_path(branch_name)
 
@@ -739,6 +1036,24 @@ def cmd_pr(
             return 1
         print()
 
+    # Determine Jira ticket ID from branch name or --key override
+    if jira_key:
+        issue_id: str | None = jira_key
+    else:
+        issue_id = extract_ticket_id(branch_name)
+        if not issue_id:
+            raw = InputPrompt(
+                message="Enter Jira ticket ID (e.g. PROJ-123), or press Enter to skip:",
+            ).execute()
+            issue_id = raw.strip().upper() or None
+
+    issue_url: str | None = None
+    if issue_id:
+        jira_base_url = config.get("jira_base_url", "")
+        issue_url = f"{jira_base_url}/browse/{issue_id}" if jira_base_url else None
+        print(f"Jira ticket: {issue_id}" + (f" — {issue_url}" if issue_url else ""))
+        print()
+
     # Open VS Code for the user to write/paste title and summary
     placeholder = f"Title for {branch_name}\n\nReplace this text with your summary content, then save and close this file tab to continue.\n"
     if ai:
@@ -746,7 +1061,7 @@ def cmd_pr(
         print()
         try:
             repo = get_repo_slug()
-            ai_output = generate_summary(branch_name, repo)
+            ai_output = generate_summary(branch_name, repo, cwd=target_path)
             initial_content = ai_output + "\n"
         except (RuntimeError, FileNotFoundError) as e:
             print(f"Warning: AI summary failed ({e}). Falling back to template.")
@@ -811,27 +1126,15 @@ def cmd_pr(
         return 1
 
     lines = content.splitlines()
-    title = lines[0].strip()
+    title = lines[0].strip().lstrip("#").strip()
     summary = "\n".join(lines[1:]).strip()
 
+    if issue_id:
+        title = f"[{issue_id}] {title}"
+        if issue_url:
+            summary = f"{summary}\n\n{issue_url}"
+
     print()
-
-    # Create Jira workitem
-    try:
-        jira_result = create_jira_workitem(title, summary, jira_key=jira_key)
-    except RuntimeError:
-        return 1
-
-    if jira_result:
-        issue_id, issue_url = jira_result
-        title = f"{issue_id} {title}"
-        summary = f"{summary}\n\n{issue_url}"
-
-    # print()
-    # print(f"Title:   {title}")
-    # print()
-    # print(summary)
-    # print()
 
     # Create the PR
     print(f"Creating pull request for branch '{branch_name}'...")
@@ -862,7 +1165,7 @@ def cmd_pr(
     print()
 
     # Add PR URL as a comment on the Jira workitem
-    if jira_result:
+    if issue_id:
         pr_number = pr_url.rstrip("/").rsplit("/", 1)[-1]
         repo_slug = get_repo_slug()
         pr_comment = json.dumps(
@@ -938,7 +1241,7 @@ def cmd_pr(
             print("Error: Failed to squash-and-merge the PR.")
             return merge_result.returncode
         append_status_report(title, summary)
-        if jira_result:
+        if issue_id:
             print(f"Closing Jira workitem {issue_id}...")
             subprocess.run(
                 [
@@ -955,6 +1258,8 @@ def cmd_pr(
         if not in_worktree:
             if yes:
                 cmd_remove(branch_name, force=True)
+                if from_worktree:
+                    print("You can now close the VS Code window for this worktree.")
                 run_git("pull", capture=False)
             else:
                 cleanup = ConfirmPrompt(
@@ -963,6 +1268,8 @@ def cmd_pr(
                 ).execute()
                 if cleanup:
                     cmd_remove(branch_name)
+                    if from_worktree:
+                        print("You can now close the VS Code window for this worktree.")
                 do_pull = ConfirmPrompt(
                     message="Run git pull?",
                     default=True,
@@ -1302,6 +1609,15 @@ def main() -> int:
     git_dir = run_git("rev-parse", "--git-dir").stdout.strip()
     git_common_dir = run_git("rev-parse", "--git-common-dir").stdout.strip()
     in_worktree = os.path.realpath(git_dir) != os.path.realpath(git_common_dir)
+    worktree_branch: str | None = None
+
+    if in_worktree:
+        # Resolve the main repo root (parent of the common .git dir) and re-run from there
+        main_repo_root = Path(os.path.realpath(git_common_dir)).parent
+        worktree_branch = run_git("branch", "--show-current").stdout.strip() or None
+        print(f"(Running pr from main repo: {main_repo_root})")
+        os.chdir(main_repo_root)
+        in_worktree = False
 
     parser = argparse.ArgumentParser(
         prog="workit",
@@ -1316,13 +1632,17 @@ def main() -> int:
             WORKFLOW
               1. Run 'workit create <branch>' from your main repo checkout.
                  A new worktree is created at ../<repo>-worktrees/<branch> and
-                 opened in a new VS Code window.
+                 opened in a new VS Code window. During creation you can optionally
+                 create a Jira ticket and link it to an epic — epics are fetched live
+                 from Jira (filtered by jira_projects + epic_projects) and presented
+                 in a fuzzy picker, with recently used epics shown at the top.
               2. Do your work in that VS Code window and remember to commit and 
                  push your changes.
-              3. When ready to ship, run 'workit pr' from the *main* repo. You can also run
-                 just 'workit pr' (or 'workit') from inside the worktree — but you will not
-                 get the option to cleanup the worktree, branch, and pull after merging when 
-                 run from inside the worktree.
+              3. When ready to ship, run 'workit pr' from the main repo checkout or
+                 directly from inside the worktree — both work identically, including
+                 the option to clean up the worktree, branch, and pull after merging.
+                 When run from a worktree, workit automatically switches context to the
+                 main repo root before proceeding.
               4. The pr flow: pushes if needed → opens VS Code for you to write
                  the title/summary → creates a Jira ticket → opens the GitHub PR,
                  and associates the PR and Jira ticket with each other.
@@ -1357,8 +1677,14 @@ def main() -> int:
 
             CONFIG KEYS
               branch_prefix    Prepended to every new branch: "kjm" → "kjm/<branch>"
-              jira_projects    List of Jira project keys shown in the selector
+              jira_projects    List of Jira project keys used for ticket creation and
+                               epic lookup (combined with epic_projects for epic search)
+              epic_projects    Additional Jira project keys to include when fetching open
+                               epics (merged with jira_projects; defaults to jira_projects
+                               if not set)
               jira_assignee    Auto-assign new Jira tickets to this user
+              jira_base_url    Base URL of your Atlassian instance (e.g. https://org.atlassian.net)
+                               Used to construct browse links: <jira_base_url>/browse/<ticket-id>
               status_report    Path to append merged-PR summaries to
 
             DEPENDENCIES (make sure you have these installed and authenticated)
@@ -1385,20 +1711,34 @@ def main() -> int:
               workspace with its own terminal, extensions state, and editor tabs.
 
             HOW THE PR FLOW WORKS
-              1. workit create <branch>
-                 Creates the worktree + branch, opens it in a new VS Code window.
+              1. workit create <branch>  (optionally: --epic AE-42)
+                 Prompts to create a Jira ticket for the branch. If created, the ticket
+                 ID is embedded at the start of the branch name:
+                   e.g. 'my-feature' → 'AE-123-my-feature' (or 'kjm/AE-123-my-feature' with prefix).
+                 You can optionally link the ticket to a Jira epic via a fuzzy picker.
+                 Open epics are fetched live from Jira (projects = jira_projects + epic_projects,
+                 deduped). Recently used epics appear at the top prefixed with [recent].
+                 The last 5 selected epics are cached for quick re-use.
+                 Opens the new worktree in a new VS Code window after a 3-second countdown.
               2. Do your work. Commit as normal inside that window.
-              3. workit pr  (run from the main repo checkout)
+              3. workit pr  (run from the main repo checkout or from inside the worktree)
+                 When run from inside a worktree, workit automatically detects the main
+                 repo root and switches to it — the full pr flow runs as if you were there,
+                 including post-merge cleanup. After the worktree is deleted, workit reminds
+                 you to close the VS Code window.
                  a. Pushes any unpushed commits to origin.
-                 b. Runs the "PR Branch Summary" AI prompt via the copilot CLI and opens
+                 b. Extracts the Jira ticket ID from the branch name automatically.
+                    If none is found, prompts you to enter one (or skip).
+                    Use --key PROJ-123 to override.
+                 c. Runs the "PR Branch Summary" AI prompt via the copilot CLI and opens
                     the result in VS Code for you to review and edit. The first line
-                    becomes the PR title; everything below becomes the PR body.
+                    becomes the PR title (leading '#' stripped); everything below becomes
+                    the PR body. The title is prefixed with the ticket ID: [AE-123] Title.
                     Use --no-ai to skip AI generation and start from a blank template.
-                 c. Ccreates a Jira ticket (if acli is configured) and links
-                    it to the PR.
-                 d. Opens the GitHub PR via the gh CLI.
-                 e. Offers to squash-merge immediately, clean up the worktree and branch,
-                    and run git pull on your main checkout.
+                 d. Adds a comment on the Jira ticket with the PR URL, linking them.
+                 e. Opens the GitHub PR via the gh CLI.
+                 f. Offers to squash-merge immediately, close the Jira ticket, clean up
+                    the worktree and branch, and run git pull on your main checkout.
 
             WHY WORKIT?
               Modern software development involves constant context switching — a critical
@@ -1465,6 +1805,12 @@ def main() -> int:
         p.add_argument(
             "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
         )
+        p.add_argument(
+            "--epic",
+            metavar="EPIC_KEY",
+            default=None,
+            help="Jira epic key to link the new ticket to (e.g. AE-42); presented as a menu if omitted",
+        )
 
     # remove / delete / del / rm
     for name in ("remove", "delete", "del", "rm"):
@@ -1485,7 +1831,9 @@ def main() -> int:
             create a Jira ticket (if acli is available), open the GitHub PR, and
             optionally squash-merge + clean up.
 
-            Run from the main repo checkout or from inside the worktree itself.
+            Can be run from the main repo checkout or from inside the worktree.
+            When run from a worktree, workit automatically switches to the main
+            repo root so the full flow (including worktree cleanup) is available.
         """),
     )
     pr_parser.add_argument(
@@ -1495,7 +1843,7 @@ def main() -> int:
         "--key",
         metavar="JIRA_KEY",
         default=None,
-        help="Jira project key to use instead of prompting",
+        help="Jira ticket ID to link (e.g. PROJ-123); overrides extraction from branch name",
     )
     pr_parser.add_argument(
         "-y",
@@ -1622,32 +1970,25 @@ def main() -> int:
             help="Jira project key to use instead of prompting",
         )
 
-    if in_worktree:
-        # Only pr is valid from inside a worktree; default to it if no subcommand given
-        raw = sys.argv[1:]
-        if raw and raw[0].lower() not in ("pr", "-h", "--help"):
-            print(
-                "Error: Only the 'pr' subcommand is available when run from a worktree."
-            )
-            return 1
-        args = parser.parse_args(
-            ["pr"] + raw if (not raw or raw[0].lower() != "pr") else raw
-        )
-        _verbose = args.verbose
-        return cmd_pr(
-            args.branch,
-            in_worktree=True,
-            jira_key=args.key,
-            yes=args.yes,
-            ai=args.ai,
-            merge=args.merge,
-        )
-
     args = parser.parse_args()
-
     _verbose = args.verbose
 
+    # If we cd'd into the main repo from a worktree, inject the branch name
+    # (unless the user already passed --branch explicitly)
+    if worktree_branch and not args.branch:
+        args.branch = worktree_branch
+
     if args.subcommand is None:
+        # If we arrived here from a worktree, default to pr
+        if worktree_branch:
+            return cmd_pr(
+                args.branch,
+                from_worktree=True,
+                jira_key=getattr(args, "key", None),
+                yes=getattr(args, "yes", False),
+                ai=getattr(args, "ai", True),
+                merge=getattr(args, "merge", False),
+            )
         # Interactive menu
         worktree_count = len(get_existing_worktrees())
         if not worktree_count:
@@ -1683,8 +2024,15 @@ def main() -> int:
         )
     if sub == "pr":
         return cmd_pr(
-            branch, jira_key=args.key, yes=args.yes, ai=args.ai, merge=args.merge
+            branch,
+            from_worktree=bool(worktree_branch),
+            jira_key=args.key,
+            yes=args.yes,
+            ai=args.ai,
+            merge=args.merge,
         )
+    if sub in ("create", "new"):
+        return cmd_create(branch, epic=getattr(args, "epic", None))
     return SUBCOMMANDS[sub](branch)
 
 
