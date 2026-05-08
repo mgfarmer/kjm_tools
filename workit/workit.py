@@ -24,6 +24,8 @@ import textwrap
 import threading
 import time
 from pathlib import Path
+import re as _re
+
 
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
@@ -74,20 +76,32 @@ def vlog(*args, **kwargs) -> None:
 
 
 PR_FORMATTER = (
-    "\n\nWrite a clear PR title on the first line, followed by a blank line, "
+    "\n\nExamine all changes on the current branch relative to main (or the default base branch). "
+    "Write a clear Level 1 markdown (#) PR title on the first line, followed by a blank line, "
     "then break the changes into high-level unrelated functional blocks and write a level 2 titled single "
     "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
     "long and written for a management audience. Do not use filenames or code syntax in "
     "the description, just describe the changes in plain language. "
-    "Be factual and concise. Do not include filler phrases."
+    "Be factual and concise. Do not include filler phrases.  Emphasize UX and customer impact where possible."
 )
 
 COMMIT_FORMATTER = (
-    "\n\nWrite a clear one line commit summary on the first line, followed by a blank line, "
+    "\n\nWrite a clear level one markdown title (#) commit summary on the first line, followed by a blank line, "
     "then break the changes into functional blocks and write a level 2 titled single "
     "paragraph for each functional change. Each paragraph should be 2 to 4 sentences "
     "long and written for a technical audience. "
-    "Be factual and concise. Do not include filler phrases."
+    "Be factual and concise. Do not include filler phrases.  Emphasize UX and customer impact where possible."
+)
+
+POST_PR_FORMATTER = (
+    "\n\nExamine all changes in PR #${PR_NUMBER} using 'gh pr view ${PR_NUMBER}' for the title "
+    "and metadata and 'gh pr diff ${PR_NUMBER}' for the full diff. "
+    "Write the level one markdown title (#) PR title on the first line, followed by a blank line, "
+    "then break the changes into high-level unrelated functional blocks and write a level 2 titled single "
+    "paragraph for each functional change. Each paragraph should be 3 to 6 sentences "
+    "long and written for a management audience. Do not use filenames or code syntax in "
+    "the description, just describe the changes in plain language. "
+    "Be factual and concise. Do not include filler phrases. Emphasize UX and customer impact where possible."
 )
 
 _DEFAULT_PROMPTS: dict[str, str] = {
@@ -111,12 +125,17 @@ _DEFAULT_PROMPTS: dict[str, str] = {
         "Examine the staged changes in this working copy."
     )
     + COMMIT_FORMATTER,
+    "Post PR Summary": (
+        "You are a helpful assistant that writes concise post-merge summaries of GitHub pull requests."
+    )
+    + POST_PR_FORMATTER,
 }
 
 _PR_PROMPT_NAME = "PR Branch Summary"
 _COMMIT_PROMPT_NAME = "Last Commit Summary"
 _UNCOMMITTED_PROMPT_NAME = "Working Copy Summary"
 _STAGED_PROMPT_NAME = "Stage Changes Summary"
+_POST_PR_PROMPT_NAME = "Post PR Summary"
 
 
 def _get_available_prompts() -> dict[str, str]:
@@ -139,7 +158,53 @@ def _load_prompt(name: str) -> str:
     raise FileNotFoundError(f"Missing prompt: {name}")
 
 
-def generate_summary(branch: str, repo: str, prompt_name: str = _PR_PROMPT_NAME) -> str:
+def _strip_copilot_work_log(text: str) -> str:
+    """Remove the copilot agentic tool-call display lines from CLI output.
+
+    Strategy 1 (preferred): if the output contains a level-1 markdown heading
+    (a line starting with '# '), discard everything before that line.
+
+    Strategy 2 (fallback): drop lines matching the copilot work-log display
+    patterns (●, │, └) and collapse stray blank lines.
+    """
+    # Strip ANSI escape codes first
+    ansi_escape = _re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    cleaned = ansi_escape.sub("", text)
+
+    # Strategy 1: find the first level-1 markdown title and keep from there
+    lines = cleaned.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("# "):
+            return "\n".join(lines[i:])
+
+    # Strategy 2: regex-based work-log line removal
+    work_log_pattern = _re.compile(
+        r"^(\s*[●•]\s|"  # ● Tool name lines
+        r"\s*[│|]\s|"  # │ content lines
+        r"\s*[└╰]\s)",  # └ N lines... footer
+        _re.UNICODE,
+    )
+    filtered = [line for line in lines if not work_log_pattern.match(line)]
+
+    # Collapse multiple consecutive blank lines into one
+    result_lines: list[str] = []
+    prev_blank = False
+    for line in filtered:
+        is_blank = not line.strip()
+        if is_blank and prev_blank:
+            continue
+        result_lines.append(line)
+        prev_blank = is_blank
+
+    return "\n".join(result_lines)
+
+
+def generate_summary(
+    branch: str,
+    repo: str,
+    prompt_name: str = _PR_PROMPT_NAME,
+    pr_number: str | None = None,
+) -> str:
     """Generate a summary using the copilot CLI with the specified prompt."""
     copilot_path = shutil.which("copilot")
     if not copilot_path:
@@ -147,7 +212,11 @@ def generate_summary(branch: str, repo: str, prompt_name: str = _PR_PROMPT_NAME)
     vlog(f"copilot binary: {copilot_path}")
 
     prompt = _load_prompt(prompt_name)
-    prompt = prompt.replace("${BRANCH}", branch).replace("${REPO}", repo)
+    prompt = (
+        prompt.replace("${BRANCH}", branch)
+        .replace("${REPO}", repo)
+        .replace("${PR_NUMBER}", pr_number or "")
+    )
     vlog("Summary prompt:")
     vlog()
     vlog(prompt)
@@ -197,13 +266,14 @@ def generate_summary(branch: str, repo: str, prompt_name: str = _PR_PROMPT_NAME)
         raise RuntimeError(f"copilot CLI exited with code {result.returncode}")
     if not result.stdout.strip():
         raise RuntimeError("copilot CLI returned empty output")
-    return result.stdout.strip()
+    return _strip_copilot_work_log(result.stdout).strip()
 
 
 def create_jira_workitem(
     title: str, summary: str, jira_key: str | None = None
 ) -> tuple[str, str] | None:
     """Create a Jira workitem via ACLI. Returns (issue_id, issue_url) or None."""
+    title = title.lstrip("#").strip()
     if not shutil.which("acli"):
         print("Warning: acli is not installed or not on PATH.")
         proceed = inquirer.confirm(
@@ -715,6 +785,22 @@ def cmd_pr(
             # loop back and re-open the editor
             continue
 
+        action = inquirer.select(
+            message="Summary ready. What would you like to do?",
+            choices=[
+                Choice("continue", "Continue with this summary"),
+                Choice("edit", "Edit again"),
+                Choice("abort", "Abort"),
+            ],
+            default="continue",
+        ).execute()
+        if action == "abort":
+            Path(tmp_path).unlink(missing_ok=True)
+            print("Aborted.")
+            return 1
+        if action == "edit":
+            continue
+
         break
 
     Path(tmp_path).unlink(missing_ok=True)
@@ -956,6 +1042,219 @@ def cmd_summary(branch_name: str | None, preset_prompt: str | None = None) -> in
     return 0
 
 
+def _get_merged_prs_last_30_days() -> list[dict]:
+    """Return merged PRs from the last 30 days, newest first."""
+    import datetime
+
+    result = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "merged",
+            "--limit",
+            "200",
+            "--json",
+            "number,title,mergedAt",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+    prs = json.loads(result.stdout)
+    recent = [
+        pr
+        for pr in prs
+        if pr.get("mergedAt")
+        and datetime.datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00"))
+        >= cutoff
+    ]
+    recent.sort(key=lambda p: p["mergedAt"], reverse=True)
+    return recent
+
+
+def cmd_post_pr(
+    pr_number: str | None,
+    jira: bool = False,
+    jira_key: str | None = None,
+) -> int:
+    """Summarize a merged PR and append the result to the status report."""
+    print()
+    print("workit — Post-PR Summary")
+    print()
+
+    if not shutil.which("gh"):
+        print("Error: GitHub CLI (gh) is not installed.")
+        print("Install it from: https://cli.github.com/")
+        return 1
+
+    if not pr_number:
+        print("Fetching merged PRs from the last 30 days...")
+        prs = _get_merged_prs_last_30_days()
+        if not prs:
+            print("No merged PRs found in the last 30 days.")
+            return 1
+        if len(prs) == 1:
+            pr_number = str(prs[0]["number"])
+            print(f"Auto-selected PR #{pr_number}: {prs[0]['title']}")
+        else:
+            choices = [
+                Choice(
+                    value=str(pr["number"]),
+                    name=f"#{pr['number']} — {pr['title']} ({pr['mergedAt'][:10]})",
+                )
+                for pr in prs
+            ]
+            pr_number = inquirer.select(
+                message="Select a merged PR to summarize:",
+                choices=choices,
+            ).execute()
+
+    print(f"Summarizing PR #{pr_number}...")
+    print()
+
+    repo = get_repo_slug()
+    try:
+        output = generate_summary(
+            branch="",
+            repo=repo,
+            prompt_name=_POST_PR_PROMPT_NAME,
+            pr_number=pr_number,
+        )
+    except (RuntimeError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        return 1
+
+    # Open VS Code for the user to review and refine the AI output
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", prefix="workit_post_pr_", delete=False
+    ) as tmp:
+        tmp.write(output + "\n")
+        tmp_path = tmp.name
+
+    while True:
+        print(
+            "Opening VS Code — review and edit the summary, then save and close the tab to continue."
+        )
+        print()
+        subprocess.run(["code", "--wait", tmp_path])
+
+        content = Path(tmp_path).read_text().strip()
+
+        if not content:
+            Path(tmp_path).unlink(missing_ok=True)
+            print("Aborted: no content provided.")
+            return 1
+
+        action = inquirer.select(
+            message="Summary ready. What would you like to do?",
+            choices=[
+                Choice("continue", "Continue with this summary"),
+                Choice("edit", "Edit again"),
+                Choice("abort", "Abort"),
+            ],
+            default="continue",
+        ).execute()
+        if action == "abort":
+            Path(tmp_path).unlink(missing_ok=True)
+            print("Aborted.")
+            return 1
+        if action == "edit":
+            continue
+
+        break
+
+    Path(tmp_path).unlink(missing_ok=True)
+
+    lines = content.splitlines()
+    pr_title = lines[0].strip()
+    summary = "\n".join(lines[1:]).strip()
+
+    append_status_report(pr_title, summary)
+
+    # Optionally create a Jira workitem
+    if jira:
+        try:
+            jira_result = create_jira_workitem(pr_title, summary, jira_key=jira_key)
+        except RuntimeError:
+            return 1
+        if jira_result:
+            issue_id, issue_url = jira_result
+            print(f"Jira workitem created: {issue_id} — {issue_url}")
+            # Add PR URL as a comment on the Jira workitem
+            pr_url_result = subprocess.run(
+                ["gh", "pr", "view", pr_number, "--json", "url", "-q", ".url"],
+                capture_output=True,
+                text=True,
+            )
+            if pr_url_result.returncode == 0 and pr_url_result.stdout.strip():
+                pr_url = pr_url_result.stdout.strip()
+                repo_slug = get_repo_slug()
+                pr_comment = json.dumps(
+                    {
+                        "version": 1,
+                        "type": "doc",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [
+                                    {"type": "text", "text": "PR: "},
+                                    {
+                                        "type": "text",
+                                        "text": f"{repo_slug} #{pr_number}",
+                                        "marks": [
+                                            {"type": "link", "attrs": {"href": pr_url}}
+                                        ],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                )
+                subprocess.run(
+                    [
+                        "acli",
+                        "jira",
+                        "workitem",
+                        "comment",
+                        "create",
+                        "--key",
+                        issue_id,
+                        "--body",
+                        pr_comment,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            # Close the newly created ticket
+            print(f"Closing Jira ticket {issue_id}...")
+            close_result = subprocess.run(
+                [
+                    "acli",
+                    "jira",
+                    "workitem",
+                    "transition",
+                    "--key",
+                    issue_id,
+                    "--status",
+                    "Closed",
+                ],
+            )
+            if close_result.returncode == 0:
+                print(f"Jira ticket {issue_id} closed.")
+            else:
+                print(f"Warning: Failed to close Jira ticket {issue_id}.")
+
+    print()
+    print(f"PR #{pr_number}: {pr_title}")
+    print()
+
+    return 0
+
+
 # --- Main ---
 
 SUBCOMMANDS = {
@@ -971,6 +1270,9 @@ SUBCOMMANDS = {
     "summary": cmd_summary,
     "sum": cmd_summary,
     "summarize": cmd_summary,
+    "post-pr": cmd_post_pr,
+    "prs": cmd_post_pr,
+    "post": cmd_post_pr,
 }
 
 
@@ -1063,6 +1365,88 @@ def main() -> int:
               acli   Atlassian CLI — optional, enables Jira integration, uses Atlassian 
                      API Token authentication
                      (https://developer.atlassian.com/cloud/acli/guides/install-linux/)
+
+            ABOUT GIT WORKTREES
+              A git worktree lets you check out multiple branches of a repository
+              simultaneously, each in its own directory, all sharing a single .git
+              database. This means you can actively work on a feature branch without
+              disturbing your main checkout — no stashing, no context switching.
+
+              workit places each worktree at:
+                ../<repo-name>-worktrees/<branch-name>/
+
+              So if your repo lives at ~/code/myapp, worktrees appear as siblings:
+                ~/code/myapp-worktrees/feature/my-feature/
+                ~/code/myapp-worktrees/fix/urgent-bug/
+
+              Each worktree is opened in its own VS Code window, giving you a clean
+              workspace with its own terminal, extensions state, and editor tabs.
+
+            HOW THE PR FLOW WORKS
+              1. workit create <branch>
+                 Creates the worktree + branch, opens it in a new VS Code window.
+              2. Do your work. Commit as normal inside that window.
+              3. workit pr  (run from the main repo checkout)
+                 a. Pushes any unpushed commits to origin.
+                 b. Runs the "PR Branch Summary" AI prompt via the copilot CLI and opens
+                    the result in VS Code for you to review and edit. The first line
+                    becomes the PR title; everything below becomes the PR body.
+                    Use --no-ai to skip AI generation and start from a blank template.
+                 c. Ccreates a Jira ticket (if acli is configured) and links
+                    it to the PR.
+                 d. Opens the GitHub PR via the gh CLI.
+                 e. Offers to squash-merge immediately, clean up the worktree and branch,
+                    and run git pull on your main checkout.
+
+            WHY WORKIT?
+              Modern software development involves constant context switching — a critical
+              bug comes in while you are mid-feature, a colleague needs a review, a spike
+              needs to be thrown away. Without tooling, each switch means stashing or
+              committing half-baked work, checking out a different branch, losing your
+              editor state, and then reversing all of that when you come back.
+
+              workit eliminates that overhead entirely. Each piece of work lives in its
+              own directory and its own VS Code window. Switching "context" is just
+              switching windows — your editor tabs, terminal history, and file state are
+              exactly where you left them. Start a hotfix while your feature build is
+              running. Review a PR while your tests are executing. Close a worktree the
+              moment a branch merges and never think about it again.
+
+              The PR flow compounds this benefit. Without workit, shipping a feature
+              requires: push the branch, open GitHub, write a title and description,
+              create a Jira ticket, paste the PR link into the ticket, merge, delete the
+              remote branch, delete the local branch, pull main. With workit, that entire
+              sequence is a single 'workit pr' invocation — AI drafts the description,
+              Jira ticket is created and linked automatically, and cleanup happens in one
+              confirmation step.
+
+              The result: less time managing infrastructure, more time writing code.
+
+            TAKING IT FURTHER: GIT REPO WINDOW COLORS
+              workit opens each worktree in its own VS Code window — but once you have
+              several windows open, they can start to look identical. The Git Repo Window
+              Colors extension (GRWC) solves this by automatically applying a unique color
+              scheme to each VS Code window based on the repository and branch it contains.
+
+              With GRWC, the title bar, activity bar, status bar, and editor tabs are all
+              color-coded so you can instantly identify which window holds which project
+              and branch — at a glance, even from the taskbar thumbnail.
+
+              Key features that pair well with workit:
+                • Per-repository colors — each repo gets a distinct base color
+                • Per-branch colors — feature branches, hotfixes, and main can each
+                  have their own color within a repo
+                • Auto-add branch rules — new branches automatically get a visually
+                  distinct color, requiring zero manual setup.  This is perfect for workit 
+                  since each new worktree starts with a new branch.
+                • Sync-compatible — color rules follow you across machines
+
+              Together, workit and GRWC give you a complete parallel-work environment:
+              workit handles the branch, worktree, Jira ticket, and PR lifecycle, while
+              GRWC ensures you always know exactly where you are just by looking at the
+              window frame.
+
+              Install GWRC from the VSCode Extension Marketplace.
         """),
     )
     parser.add_argument(
@@ -1201,6 +1585,41 @@ def main() -> int:
             help=f'Use the "{_STAGED_PROMPT_NAME}" prompt without prompting',
         )
 
+    # post-pr / prs / post
+    for name in ("post-pr", "prs", "post"):
+        p = subparsers.add_parser(
+            name,
+            help="Summarize a merged PR and append to the status report",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            description=textwrap.dedent(f"""\
+                Run a copilot-powered summary of a merged GitHub PR and append
+                the result to the configured status_report file.
+
+                If PR_NUMBER is omitted, fetches all PRs merged in the last 30 days
+                and presents an interactive selection menu.
+
+                Uses the built-in "{_POST_PR_PROMPT_NAME}" prompt.
+            """),
+        )
+        p.add_argument(
+            "pr_number",
+            nargs="?",
+            default=None,
+            help="PR number to summarize (prompted if omitted)",
+        )
+        p.add_argument(
+            "--jira",
+            action="store_true",
+            default=False,
+            help="Create a Jira workitem for this PR and link it",
+        )
+        p.add_argument(
+            "--key",
+            metavar="JIRA_KEY",
+            default=None,
+            help="Jira project key to use instead of prompting",
+        )
+
     if in_worktree:
         # Only pr is valid from inside a worktree; default to it if no subcommand given
         raw = sys.argv[1:]
@@ -1254,6 +1673,12 @@ def main() -> int:
         return cmd_list()
     if sub in ("summary", "sum", "summarize"):
         return cmd_summary(branch, preset_prompt=getattr(args, "preset_prompt", None))
+    if sub in ("post-pr", "prs", "post"):
+        return cmd_post_pr(
+            getattr(args, "pr_number", None),
+            jira=getattr(args, "jira", False),
+            jira_key=getattr(args, "key", None),
+        )
     if sub == "pr":
         return cmd_pr(
             branch, jira_key=args.key, yes=args.yes, ai=args.ai, merge=args.merge
