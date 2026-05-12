@@ -3,9 +3,13 @@
 Usage:
     workit create [branch-name]
     workit remove [branch-name]
+    workit abandon [branch-name]
     workit pr [branch-name]
     workit summary [branch-name]
     workit open [branch-name]
+    workit config
+    workit tldr
+    workit help
 
 Subcommand aliases:
     create: new
@@ -63,8 +67,6 @@ _CONFIG_DEFAULTS: dict = {
     "status_report": "~/workit_status_report.md",
     "jira_base_url": "https://wavecomp.atlassian.net",
 }
-
-_EPIC_CACHE_FILE = _CONFIG_DIR / "epic_cache.json"
 
 
 def _load_config() -> dict:
@@ -445,16 +447,28 @@ def branch_exists(branch_name: str) -> bool:
 
 
 def get_existing_worktrees() -> list[str]:
-    """Return list of branch names that have worktrees in the worktrees directory."""
+    """Return list of branch names that have worktrees in the worktrees directory.
+
+    Uses 'git worktree list --porcelain' as the authoritative source rather than
+    walking the filesystem, which avoids spawning thousands of subprocesses.
+    """
     base = get_worktree_base()
-    if not base.is_dir():
+    result = run_git("worktree", "list", "--porcelain")
+    if result.returncode != 0:
         return []
     results = []
-    for d in base.rglob("*"):
-        if d.is_dir():
-            branch_name = str(d.relative_to(base))
-            if branch_exists(branch_name):
-                results.append(branch_name)
+    current_path: str | None = None
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = line[len("worktree ") :].strip()
+        elif line.startswith("branch "):
+            if current_path:
+                wt_path = Path(current_path).resolve()
+                if wt_path.is_relative_to(base.resolve()):
+                    branch_name = line[len("branch refs/heads/") :].strip()
+                    if branch_name:
+                        results.append(branch_name)
+            current_path = None
     return sorted(results)
 
 
@@ -514,28 +528,34 @@ def extract_ticket_id(branch_name: str) -> str | None:
 
 
 def load_epic_cache() -> list[dict]:
-    """Load the epic cache from disk. Returns a list of {key, summary} dicts."""
+    """Load the epic cache from config.json. Returns a list of {key, summary} dicts."""
     try:
-        if _EPIC_CACHE_FILE.exists():
-            with _EPIC_CACHE_FILE.open() as f:
+        if _CONFIG_FILE.exists():
+            with _CONFIG_FILE.open() as f:
                 data = json.load(f)
-            if isinstance(data, list):
-                return data[:5]
+            cache = data.get("epic_cache", [])
+            if isinstance(cache, list):
+                return cache[:5]
     except (json.JSONDecodeError, OSError):
         pass
     return []
 
 
 def save_epic_cache(epic_key: str, epic_summary: str) -> None:
-    """Prepend an epic to the cache, deduplicate by key, truncate to 5."""
+    """Prepend an epic to the cache in config.json, deduplicate by key, truncate to 5."""
     cache = load_epic_cache()
     cache = [e for e in cache if e.get("key") != epic_key]
     cache.insert(0, {"key": epic_key, "summary": epic_summary})
     cache = cache[:5]
     try:
-        _EPIC_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with _EPIC_CACHE_FILE.open("w") as f:
-            json.dump(cache, f, indent=2)
+        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        if _CONFIG_FILE.exists():
+            with _CONFIG_FILE.open() as f:
+                existing = json.load(f)
+        existing["epic_cache"] = cache
+        with _CONFIG_FILE.open("w") as f:
+            json.dump(existing, f, indent=2)
     except OSError as e:
         print(f"Warning: Could not write epic cache: {e}")
 
@@ -790,7 +810,13 @@ def cmd_create(branch_name: str | None, epic: str | None = None) -> int:
 
 
 def cmd_remove(branch_name: str | None, force: bool = False) -> int:
-    """Remove a worktree and delete its branch."""
+    """Remove a worktree and delete its branch.
+
+    Use this when the branch has been merged or the work is otherwise complete
+    and you simply want to clean up the worktree and local branch. It does NOT
+    touch any associated Jira ticket. For discarding a branch that will never
+    be merged and closing its Jira ticket, use 'abandon' instead.
+    """
     print()
     print("workit — Remove a worktree")
     print()
@@ -938,6 +964,121 @@ def cmd_remove(branch_name: str | None, force: bool = False) -> int:
     print()
 
     print(f"Done. Worktree and branch '{branch_name}' have been removed.")
+    return 0
+
+
+def cmd_abandon(branch_name: str | None) -> int:
+    """Abandon a worktree: delete the worktree, branch, and associated Jira ticket.
+
+    Use this when a line of work is no longer viable and should be discarded
+    entirely — the worktree, branch, and Jira ticket are all removed. Each
+    deletion is confirmed separately. For cleaning up after a successful merge
+    without touching Jira, use 'remove' instead.
+    """
+    print()
+    print("workit — Abandon a worktree")
+    print()
+    if not branch_name:
+        branch_name = prompt_select_worktree("abandon")
+        if not branch_name:
+            return 1
+
+    target_path = get_target_path(branch_name)
+    ticket_id = extract_ticket_id(branch_name)
+
+    if not branch_exists(branch_name):
+        print(f"Error: Branch '{branch_name}' does not exist.")
+        return 1
+
+    # Show summary of what will be destroyed
+    print("This will PERMANENTLY DESTROY:")
+    print(f"  Worktree:    {target_path}")
+    print(f"  Branch:      {branch_name}")
+    if ticket_id:
+        jira_base_url = config.get("jira_base_url", "")
+        ticket_url = (
+            f"{jira_base_url}/browse/{ticket_id}" if jira_base_url else ticket_id
+        )
+        print(f"  Jira ticket: {ticket_id} — {ticket_url}")
+    else:
+        print("  Jira ticket: (none detected in branch name)")
+    print()
+
+    # Step 1: Remove the worktree
+    worktree_exists = target_path.is_dir()
+    if worktree_exists:
+        print(f"Step 1: Remove worktree at '{target_path}'")
+        confirm = ConfirmPrompt(
+            message="Delete this worktree?",
+            default=False,
+        ).execute()
+        if not confirm:
+            print("Aborted.")
+            return 0
+        result = run_git("worktree", "remove", "--force", str(target_path))
+        if result.returncode != 0:
+            print("Error: Failed to remove worktree.")
+            if result.stderr:
+                print(result.stderr)
+            return 1
+        print("  Worktree removed.")
+        print()
+    else:
+        print(f"Step 1: Worktree at '{target_path}' does not exist, skipping.")
+        print()
+
+    # Step 2: Delete the local branch
+    print(f"Step 2: Delete local branch '{branch_name}'")
+    confirm = ConfirmPrompt(
+        message="Delete this branch?",
+        default=False,
+    ).execute()
+    if not confirm:
+        print("Aborted. Note: the worktree has already been removed (if it existed).")
+        return 0
+    result = run_git("branch", "-D", branch_name)
+    if result.returncode != 0:
+        print("Error: Failed to delete branch.")
+        if result.stderr:
+            print(result.stderr)
+        return 1
+    print("  Branch deleted.")
+    print()
+
+    # Step 3: Delete the Jira ticket
+    if ticket_id:
+        if shutil.which("acli"):
+            print(f"Step 3: Delete Jira ticket '{ticket_id}'")
+            confirm = ConfirmPrompt(
+                message=f"Delete Jira ticket {ticket_id}?",
+                default=False,
+            ).execute()
+            if confirm:
+                result = subprocess.run(
+                    ["acli", "jira", "workitem", "delete", "--key", ticket_id],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    print(f"Warning: Failed to delete Jira ticket {ticket_id}.")
+                    output = result.stdout.strip() or result.stderr.strip()
+                    if output:
+                        print(output)
+                else:
+                    print(f"  Jira ticket {ticket_id} deleted.")
+            else:
+                print(f"  Jira ticket {ticket_id} not deleted.")
+            print()
+        else:
+            print(
+                f"Step 3: acli not found — Jira ticket '{ticket_id}' was not deleted."
+            )
+            print()
+    else:
+        print("Step 3: No Jira ticket detected in branch name — skipping.")
+        print()
+
+    print(f"Done. Worktree and branch '{branch_name}' have been abandoned.")
     return 0
 
 
@@ -1564,6 +1705,156 @@ def cmd_post_pr(
     return 0
 
 
+def cmd_check() -> int:
+    """Check that all required tooling is installed and authenticated."""
+    print()
+    print("workit — Tooling check")
+    print()
+
+    all_ok = True
+
+    # ── gh (GitHub CLI) ──────────────────────────────────────────────────────
+    print("gh  (GitHub CLI — required)")
+    gh_path = shutil.which("gh")
+    if not gh_path:
+        all_ok = False
+        print("  ✗ Not installed")
+        print("    Install: https://cli.github.com/")
+        print("      Linux:  sudo apt install gh   |   brew install gh")
+        print("      macOS:  brew install gh")
+        print("    Auth:    gh auth login")
+    else:
+        print(f"  ✓ Installed: {gh_path}")
+        auth_result = subprocess.run(
+            ["gh", "auth", "status"], capture_output=True, text=True
+        )
+        combined = (auth_result.stdout + auth_result.stderr).strip()
+        if auth_result.returncode == 0:
+            # Show each "Logged in to …" line (one per account)
+            logged_in_lines = [
+                line.strip()
+                for line in combined.splitlines()
+                if "logged in to" in line.lower()
+            ]
+            if logged_in_lines:
+                for line in logged_in_lines:
+                    print(f"  ✓ {line.lstrip('✓ ')}")
+            else:
+                print("  ✓ Authenticated")
+        else:
+            all_ok = False
+            print("  ✗ Not authenticated")
+            print("    Run: gh auth login")
+    print()
+
+    # ── copilot (gh extension, requires gh) ──────────────────────────────────
+    print("copilot  (gh extension — required for AI summaries)")
+    copilot_path = shutil.which("copilot")
+    if copilot_path:
+        print(f"  ✓ Installed: {copilot_path}")
+    else:
+        # copilot may be installed as an extension but not yet on PATH
+        ext_installed = False
+        if gh_path:
+            ext_result = subprocess.run(
+                ["gh", "extension", "list"], capture_output=True, text=True
+            )
+            ext_installed = "copilot" in ext_result.stdout.lower()
+        if ext_installed:
+            print("  ⚠ Installed as gh extension but 'copilot' is not on PATH")
+            print(
+                "    workit invokes 'copilot' directly — ensure gh extensions are on PATH."
+            )
+            print(
+                "    Tip: add $(gh extension path) to your PATH, or create a wrapper script."
+            )
+        else:
+            all_ok = False
+            print("  ✗ Not installed")
+            print("    Install: gh extension install github/gh-copilot")
+            print("    Auth:    Inherits gh authentication — no separate login needed")
+    # Auth for copilot is the same as gh; only check if copilot is (or may be) present
+    if copilot_path or (gh_path and ext_installed):
+        if gh_path:
+            auth_result = subprocess.run(
+                ["gh", "auth", "status"], capture_output=True, text=True
+            )
+            if auth_result.returncode == 0:
+                print("  ✓ Authenticated (inherits gh auth)")
+            else:
+                all_ok = False
+                print("  ✗ Not authenticated (requires gh auth)")
+                print("    Run: gh auth login")
+    print()
+
+    # ── acli (Atlassian CLI) — optional ─────────────────────────────────────
+    print("acli  (Atlassian CLI — optional, enables Jira integration)")
+    acli_path = shutil.which("acli")
+    if not acli_path:
+        print("  ✗ Not installed  (Jira features will be skipped)")
+        print(
+            "    Install: https://developer.atlassian.com/cloud/acli/guides/install-linux/"
+        )
+        print("    Auth:    After installing, set your Atlassian API token:")
+        print(
+            "               acli config set --url https://<your-org>.atlassian.net \\"
+        )
+        print("                               --token <your-api-token>")
+        print(
+            "             Tokens: https://id.atlassian.com/manage-profile/security/api-tokens"
+        )
+    else:
+        print(f"  ✓ Installed: {acli_path}")
+        # Probe auth with a lightweight search; any valid authed response is fine
+        probe = subprocess.run(
+            [
+                "acli",
+                "jira",
+                "workitem",
+                "search",
+                "--jql",
+                "issuetype = Epic",
+                "--limit",
+                "1",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        combined = (probe.stdout + probe.stderr).strip().lower()
+        if probe.returncode == 0:
+            print("  ✓ Authenticated")
+        elif any(
+            kw in combined
+            for kw in (
+                "unauthorized",
+                "authentication",
+                "token",
+                "login",
+                "403",
+                "401",
+                "credential",
+            )
+        ):
+            print("  ✗ Not authenticated")
+            print("    Run: acli config set --url https://<your-org>.atlassian.net \\")
+            print("                         --token <your-api-token>")
+            print(
+                "    Tokens: https://id.atlassian.com/manage-profile/security/api-tokens"
+            )
+        else:
+            print("  ⚠ Could not verify authentication (probe query failed)")
+            print(f"    Error: {(probe.stdout + probe.stderr).strip()[:120]}")
+    print()
+
+    if all_ok:
+        print("All required tools are installed and authenticated.")
+    else:
+        print("One or more required tools need attention. See above for details.")
+
+    return 0 if all_ok else 1
+
+
 # --- Main ---
 
 SUBCOMMANDS = {
@@ -1573,6 +1864,7 @@ SUBCOMMANDS = {
     "delete": cmd_remove,
     "del": cmd_remove,
     "rm": cmd_remove,
+    "abandon": cmd_abandon,
     "pr": cmd_pr,
     "code": cmd_code,
     "edit": cmd_code,
@@ -1582,6 +1874,7 @@ SUBCOMMANDS = {
     "post-pr": cmd_post_pr,
     "prs": cmd_post_pr,
     "post": cmd_post_pr,
+    "check": cmd_check,
 }
 
 
@@ -1594,6 +1887,56 @@ def cmd_list() -> int:
             print(f"  • {wt}")
     else:
         print("No existing worktrees.")
+    return 0
+
+
+def cmd_config() -> int:
+    """Open ~/.config/workit/config.json in VS Code.
+
+    Creates the file with default values if it does not yet exist.
+    The file is opened without blocking — the terminal returns immediately
+    so the user can continue working while editing the config.
+    """
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not _CONFIG_FILE.exists():
+        with _CONFIG_FILE.open("w") as f:
+            json.dump(_CONFIG_DEFAULTS, f, indent=2)
+        print(f"Created default config: {_CONFIG_FILE}")
+    subprocess.run(["code", str(_CONFIG_FILE)])
+    return 0
+
+
+def cmd_tldr() -> int:
+    """Print a brief getting-started guide."""
+    print(
+        textwrap.dedent("""\
+        workit — quick-start guide
+
+        SETUP
+          1. Run 'workit config' to create and open ~/.config/workit/config.json.
+          2. Set jira_projects to your Jira project keys (e.g. ["AE", "MAP"]).
+          3. Optionally set branch_prefix (e.g. "kjm") to namespace your branches.
+
+        DAILY WORKFLOW
+          workit create [name]   Start a new branch + worktree (opens VS Code).
+                                 Optionally creates a Jira ticket and links it to an epic.
+          workit pr [name]       Push, AI-draft a PR description, create the PR,
+                                 link it to Jira, and optionally merge + clean up.
+
+        LESS COMMON
+          workit remove [name]   Clean up after a merged branch (worktree + local branch).
+          workit abandon [name]  Discard unwanted work (worktree + branch + Jira ticket).
+
+        OTHER COMMANDS
+          workit list            List all open worktrees.
+          workit open [name]     Open an existing worktree in a new VS Code window.
+          workit summary [name]  AI-summarize a branch (PR, commit, working copy, etc.).
+          workit config          Open config.json in VS Code.
+          workit help            Show full documentation.
+
+        Run 'workit --help' or 'workit help' for full details.
+    """)
+    )
     return 0
 
 
@@ -1815,11 +2158,33 @@ def main() -> int:
     # remove / delete / del / rm
     for name in ("remove", "delete", "del", "rm"):
         p = subparsers.add_parser(
-            name, help="Remove the worktree and delete its branch"
+            name,
+            help="Remove a completed worktree and its branch (Jira ticket untouched)",
+            description=(
+                "Remove the worktree directory and delete the local branch. "
+                "Use this after a branch has been merged or the work is otherwise done. "
+                "The associated Jira ticket is NOT affected. "
+                "To discard an unwanted branch and delete its Jira ticket, use 'abandon' instead."
+            ),
         )
         p.add_argument(
             "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
         )
+
+    # abandon
+    p = subparsers.add_parser(
+        "abandon",
+        help="Discard a non-viable worktree, branch, and its Jira ticket",
+        description=(
+            "Permanently discard a line of work that will never be merged. "
+            "Deletes the worktree directory, the local branch, and the associated Jira ticket, "
+            "each with a separate confirmation. "
+            "To clean up after a successful merge without touching Jira, use 'remove' instead."
+        ),
+    )
+    p.add_argument(
+        "branch", nargs="?", default=None, help="Branch name (prompted if omitted)"
+    )
 
     # pr
     pr_parser = subparsers.add_parser(
@@ -1872,6 +2237,24 @@ def main() -> int:
 
     # list
     subparsers.add_parser("list", help="List existing worktrees")
+
+    # config
+    subparsers.add_parser(
+        "config",
+        help="Open ~/.config/workit/config.json in VS Code (creates it with defaults if absent)",
+    )
+
+    # help
+    subparsers.add_parser("help", help="Show this help message and exit")
+
+    # tldr
+    subparsers.add_parser("tldr", help="Print a brief getting-started guide")
+
+    # check
+    subparsers.add_parser(
+        "check",
+        help="Check that gh, copilot, and acli are installed and authenticated",
+    )
 
     # summary / sum / summarize
     for name in ("summary", "sum", "summarize"):
@@ -2014,6 +2397,15 @@ def main() -> int:
 
     if sub == "list":
         return cmd_list()
+    if sub == "config":
+        return cmd_config()
+    if sub == "help":
+        parser.print_help()
+        return 0
+    if sub == "tldr":
+        return cmd_tldr()
+    if sub == "check":
+        return cmd_check()
     if sub in ("summary", "sum", "summarize"):
         return cmd_summary(branch, preset_prompt=getattr(args, "preset_prompt", None))
     if sub in ("post-pr", "prs", "post"):
@@ -2033,6 +2425,8 @@ def main() -> int:
         )
     if sub in ("create", "new"):
         return cmd_create(branch, epic=getattr(args, "epic", None))
+    if sub == "abandon":
+        return cmd_abandon(branch)
     return SUBCOMMANDS[sub](branch)
 
 
